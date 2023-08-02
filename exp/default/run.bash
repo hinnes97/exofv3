@@ -5,7 +5,6 @@ set -x
 #--------------------------------------------------------------------------------------------------------
 # define variables
 # Check fms_home has been passed as command line argument
-
 #=====================================================================================================
 # User edit this section only
 #=====================================================================================================
@@ -22,6 +21,7 @@ npes=24
 template=$fms_home/mkmf/templates/mkmf.template.$platform   # path to mkmf template for platformx
 mkmf=$fms_home/mkmf/bin/mkmf                      # path to executable mkmf
 sourcedir=$fms_home/src                           # path to directory containing model source code
+pp_path=$fms_home/postprocessing/bin
 
 #MDH
 #source /etc/csh.cshrc
@@ -39,6 +39,7 @@ run_script=$PWD/run_${run_name}              # path/name of this run script (for
 exp_home=$PWD                           # directory containing run/$run_script and input/
 exp_name=${exp_home##*/}                       # name of experiment (i.e., name of this model build)
 
+${PATH}="${PATH}:${pp_path}"
 ###############
 fms_run=$PWD
 rm -rf workdir
@@ -51,7 +52,7 @@ fi
 
 ##############
 
-mppnccombine=$fms_home/FRE-NCtools/postprocessing/mppnccombine/mppnccombine
+#mppnccombine=$fms_home/FRE-NCtools/postprocessing/mppnccombine/mppnccombine
 
 #--------------------------------------------------------------------------------------------------------
 execdir=$PWD/exec.$platform       # where code is compiled and executable is created
@@ -115,7 +116,7 @@ if [[ $? != 0 ]] ; then echo "Error in model run" ; exit ; fi
 #combine netcdf files
  if [[ $npes > 1 ]] ; then
     for ncfile in `/bin/ls *.nc.0000` ; do
- 	$mppnccombine -r -n4 ${ncfile%.*}
+ 	mppnccombine -r -n4 ${ncfile%.*}
     done
  fi
 #
@@ -130,7 +131,7 @@ mosaic_dir=$fms_home/FRE-NCtools/tools/make_solo_mosaic/C24
 #cp $mosaic_dir/horizontal_grid.tile?.nc ./
 #cp $mosaic_dir/mosaic_n48.nc ./
 
-fregrid=$fms_home/FRE-NCtools/tools/fregrid/fregrid_parallel
+#fregrid=$fms_home/FRE-NCtools/tools/fregrid/fregrid_parallel
 
 CXX=24
 CXX2=48
@@ -141,7 +142,7 @@ for File in $diagFiles ; do
   variables=`echo $variables |sed 's/ /,/g'`
   basename=${File%.*.*}
   
-   mpirun -np $npes $fregrid --input_mosaic $mosaic_dir/mosaic_n48.nc --input_file $basename --interp_method conserve_order2 --remap_file fregrid_remap_file --nlon $CXX4 --nlat $CXX2 --scalar_field $variables 
+   mpirun -np $npes fregrid_parallel --input_mosaic $mosaic_dir/mosaic_n48.nc --input_file $basename --interp_method conserve_order2 --remap_file fregrid_remap_file --nlon $CXX4 --nlat $CXX2 --scalar_field $variables 
    latlonfiles="$latlonfiles $basename.nc"
 done
 if [[ $? != 0 ]] ; then echo "Error in regrid" ; exit ; fi
@@ -155,8 +156,8 @@ ncks -A -v pk,bk atmos_static.tile1.nc atmos_daily.nc
 ncks -A -v pk,bk atmos_static.tile1.nc atmos_average.nc
 
 interp_files="$workdir/atmos_daily.nc $workdir/atmos_average.nc"
-interp_dir="$fms_home/FRE-NCtools/postprocessing/plevel"
-interp_script="plevel.sh"
+#interp_dir="$fms_home/FRE-NCtools/postprocessing/plevel"
+#interp_script="plevel.sh"
 for File in $interp_files ; do
     pfull=$(ncdump -v pfull $File | sed -ne '/ pfull =/,$ p' | cut -f 2 -d '=' | cut -f 1 -d ';' | sed '$d' | sed 's/,/\ /g'| tr '\n' ' ')
     pfull_new=
@@ -166,9 +167,10 @@ for File in $interp_files ; do
     done
     set -x
     pfull=$(echo $pfull_new | xargs)
-    (cd $interp_dir ; $interp_script -0 -a -p ''"$pfull"'' -i $File -o "${File%.*}_interp.nc")
+    (cd $pp_path ; plevel.sh -0 -a -p ''"$pfull"'' -i $File -o "${File%.*}_interp.nc")
 done
 if [[ $? != 0 ]] ; then echo "Error in vertical interpolation" ; exit ; fi
+
 # Move output
 # Get runtime
 runtime=$(grep 'days' input.nml | awk '{print $3}')
@@ -181,6 +183,7 @@ mv atmos_* $output_dir
 cp input.nml $output_dir
 cp ../run.bash $output_dir
 mv RESTART $output_dir
+mv logfile* $output_dir
 
 cp -rf srcmods $output_dir
 
