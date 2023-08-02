@@ -1,0 +1,88 @@
+ &main_nml
+     days = 2
+     dt_atmos = 1200 /
+
+&fms_nml
+    clock_grain = 'LOOP'
+    domains_stack_size =  5000000
+    print_memory_usage = .true.
+/
+
+&fms_io_nml
+    threading_write = 'multi'
+    fileset_write = 'multi'
+/
+
+&fms2_io_nml
+    netcdf_default_format='netcdf4'
+/
+
+&fv_core_nml
+    layout = 2, 2
+    npx = 25
+    npy = 25
+    npz = 48
+    ntiles = 6
+    do_held_suarez = .true.
+    adiabatic = .false.
+    print_freq = 6
+    grid_type = 0
+    warm_start = .false.
+    vtdm4 = 0.1
+    io_layout = 2, 2
+    nwat = 1
+    inline_q = .true.
+    nord = 2
+    is_ideal_case = .true.
+    fv_debug = .false.
+    beta = 0.25
+    do_vort_damp = .false.
+    a2b_ord = 4
+    tau = 0.0
+    hydrostatic = .true.
+    n_sponge = 0
+/
+
+&fv_grid_nml
+    grid_name = 'Gnomonic'
+/
+
+&test_case_nml
+    test_case = 14
+    alpha = 0.0
+/
+
+&integ_phys_nml
+    do_intermediate_phys = .false.
+/
+
+&sim_phys_nml
+    sst_restore_timescale = 0.0
+    do_K_warm_rain = .false.
+    do_GFDL_sim_phys = .false.
+    do_surf_drag = .true.
+    do_terminator = .false.
+    do_zurita_HS = .false.
+/
+
+&GFDL_sim_phys_nml
+    diurnal_cycle = .false.
+    mixed_layer = .false.
+    gray_rad = .false.
+    cloudy_rad = .false.
+    strat_rad = .false.
+    do_abl = .false.
+    do_mon_obkv = .false.
+    heating_rate = 0.5
+    cooling_rate = 0.0
+    uniform_sst = .false.
+    sst0 = 302.15    
+    sst_type = 0
+    shift_n = 12.0
+    do_t_strat = .false.
+    tau_strat = 10.0
+    prog_low_cloud = .false.
+    low_cf0 = 0.0
+    zero_winds = .false.
+/
+    

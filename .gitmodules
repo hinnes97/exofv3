@@ -1,0 +1,18 @@
+[submodule "src/GFDL_atmos_cubed_sphere"]
+	path = src/GFDL_atmos_cubed_sphere
+	url = git@github.com:hinnes97/GFDL_atmos_cubed_sphere.git
+[submodule "src/FMS"]
+	path = src/FMS
+	url = git@github.com:hinnes97/FMS.git
+[submodule "src/atmos_drivers"]
+	path = src/atmos_drivers
+	url = git@github.com:hinnes97/atmos_drivers.git
+[submodule "src/atmos_phys"]
+	path = src/atmos_phys
+	url = git@github.com:hinnes97/atmos_phys.git
+[submodule "src/FRE-NCtools"]
+	path = src/FRE-NCtools
+	url = git@github.com:hinnes97/FRE-NCtools.git
+[submodule "src/mkmf"]
+	path = src/mkmf
+	url = git@github.com:hinnes97/mkmf.git
