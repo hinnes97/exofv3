@@ -1,0 +1,4 @@
+$sourcedir/FMS/test_fms
+$sourcedir/GFDL_atmos_cubed_sphere/driver/GFDL
+$sourcedir/GFDL_atmos_cubed_sphere/driver/SHiELD
+$sourcedir/GFDL_atmos_cubed_sphere/docs

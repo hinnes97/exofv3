@@ -8,7 +8,7 @@ set -x
 #=====================================================================================================
 # User edit this section only
 #=====================================================================================================
-fms_home=$net2/new_fms
+fms_home=$net2/exofv3
 platform=oxford_ubuntu_1804                                      # A unique identifier for your platform
 output_root=$net2/output_newfms
 init_cond=""                                                    # Directory of restart file
@@ -18,9 +18,9 @@ plot_plevels="50.0 500.0"                                       # Pressure level
 #====================================================================================================
 
 npes=24
-template=$fms_home/mkmf/templates/mkmf.template.$platform   # path to mkmf template for platformx
-mkmf=$fms_home/mkmf/bin/mkmf                      # path to executable mkmf
-sourcedir=$fms_home/src                           # path to directory containing model source code
+template=$fms_home/src//mkmf/templates/mkmf.template.$platform   # path to mkmf template for platformx
+mkmf=$fms_home/src/mkmf/bin/mkmf                                # path to executable mkmf
+sourcedir=$fms_home/src                                         # path to directory containing model source code
 pp_path=$fms_home/postprocessing/bin
 
 #MDH
@@ -39,7 +39,7 @@ run_script=$PWD/run_${run_name}              # path/name of this run script (for
 exp_home=$PWD                           # directory containing run/$run_script and input/
 exp_name=${exp_home##*/}                       # name of experiment (i.e., name of this model build)
 
-${PATH}="${PATH}:${pp_path}"
+PATH="${PATH}:${pp_path}"
 ###############
 fms_run=$PWD
 rm -rf workdir
@@ -85,17 +85,33 @@ echo "fms_home = $fms_home" >> $workdir/tmp_template
 
 # Prepend fortran files in srcmods directory to pathnames.
 # Use 'find' to make list of srcmod/*.f90 files. mkmf uses only the first instance of any file name.
-cd $sourcedir
 find $exp_home/srcmods/ -maxdepth 1 -iname "*.f90" -o -iname "*.F90" -o -iname "*.inc" -o -iname "*.c" -o -iname "*.h" > $workdir/tmp_pathnames
 echo "Using the following sourcecode modifications:"
 cat $workdir/tmp_pathnames
 
-find $sourcedir/atmos_exo -iname "*.f90" -o -iname "*.F90" -o -iname "*.c" -o -iname "*.h" -o -iname "*.inc" >> $workdir/tmp_pathnames
-find $sourcedir -path $sourcedir/atmos_exo -prune -o \( -iname "*.f90" -o -iname "*.F90" -o -iname "*.c" -o -iname "*.h" -o -iname "*.inc" \) -print >> $workdir/tmp_pathnames
+set +x
+excludes=$fms_home/tools/src_filter/exc_dirs # list of dirs to exclude from src search
+includes=$fms_home/tools/src_filter/src_dirs # list of dirs to include from src search
+
+readarray includes < $includes
+readarray excludes < $excludes
+includes=$(eval echo ${includes[@]})
+excludes=($(eval echo ${excludes[@]}))
+
+exc_cmd=("( -path ${excludes[0]}")
+for exc in ${excludes[@]:1} ; do
+    exc_cmd+=("-o -path $exc")
+done
+exc_cmd+=(")")
+
+find_args=($includes ${exc_cmd[@]} -prune -o \( -iname "*.f90" -o -iname "*.F90" -o -iname "*.inc" -o -iname "*.c" -o -iname "*.h" \) -print)
+set -x
+find "${find_args[@]}" >> $workdir/tmp_pathnames
 
 cd $execdir
 
-$mkmf -p fms.x -t $template -c "-DHI_48 -Duse_libMPI -Duse_netCDF -DSPMD" -a $sourcedir $workdir/tmp_pathnames $workdir/tmp_pathnames_soc_int $workdir/tmp_pathnames_soc_src $workdir/tmp_pathnames_soc_mod $sourcedir/shared/mpp/include $sourcedir/shared/include
+$mkmf -p fms.x -t $template -c "-DHI_48 -Duse_libMPI -Duse_netCDF -DSPMD" -a $sourcedir\
+	 $workdir/tmp_pathnames 
 make -j 4 -f Makefile
 
 if [[ $? != 0 ]] ; then
