@@ -21,8 +21,8 @@ install_dir="${PWD}/../postprocessing"
 mosaic_dir="${PWD}/../postprocessing/mosaics"
 cd $nctools_dir
 
-# Run autoreconf
-autoreconf -i . || { echo "Autoreconf failed"; exit $?; } 
+# # Run autoreconf
+# autoreconf -i . || { echo "Autoreconf failed"; exit $?; } 
 
 # Make build directory
 if [[ ! -d "build" ]] ; then
@@ -30,12 +30,12 @@ if [[ ! -d "build" ]] ; then
 fi
 cd build
 
-# Run configure
-../configure --with-mpi=yes --with-netcdf=yes --with-netcdf-fortran=yes --prefix=$install_dir ||\
-    { echo "Configure failed"; exit $?; }
+# # Run configure
+# ../configure --with-mpi=yes --with-netcdf=yes --with-netcdf-fortran=yes --prefix=$install_dir ||\
+#     { echo "Configure failed"; exit $?; }
 
 # Run make
-make || {echo "Error in make"; exit $?; }
+make || { echo "Error in make"; exit $?; }
 make install || { echo "Error in make install"; exit $?; }
 
 # Build C24, C32 and C48 mosaics

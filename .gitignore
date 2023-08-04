@@ -6,6 +6,7 @@ exp/*
 workdir
 exec*
 srcmods
+exp/*/user_config
 
 #================================================================
 # Below are standard templates for C++ and python found on github

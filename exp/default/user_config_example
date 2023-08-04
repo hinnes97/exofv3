@@ -1,0 +1,11 @@
+# Example of config file. Edit for specific user move to user_config
+fv3_home=[path_to_exofv3]
+platform=[prefix_of_mkmf_template] # e.g. oxford_ubuntu_1804
+output_root=[output_directory] # e.g. /some/directory/output_dir
+res=[cubed_sphere_resolution] # e.g. 24 for C24
+npes=[number_of_processors] # e.g. 24
+# Leave next two blank for cold start at 0 days
+init_cond=[directory_of_restart] # e.g. /some/directory/output_dir
+rst_time=[time_of_restart] # days
+run_name=[sets_output_dir_name] 
+plot_plevels=["p1 p2 p3"] # space-separated list of pressure levels
