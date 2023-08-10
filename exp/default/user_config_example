@@ -9,3 +9,4 @@ init_cond=[directory_of_restart] # e.g. /some/directory/output_dir
 rst_time=[time_of_restart] # days
 run_name=[sets_output_dir_name] 
 plot_plevels=["p1 p2 p3"] # space-separated list of pressure levels
+openmp=[true/false] # Whether to compile using openmp

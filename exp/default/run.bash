@@ -13,7 +13,12 @@ set -x
 #====================================================================================================
 # Set important paths
 #====================================================================================================
-template=$fv3_home/tools/mkmf_templates/mkmf.template.$platform   # path to mkmf template for platformx
+
+if [[ $openmp = true ]] ; then
+    template=$fv3_home/tools/mkmf_templates/mkmf.template.${platform}_openmp   # path to mkmf template for platformx
+else
+    template=$fv3_home/tools/mkmf_templates/mkmf.template.$platform
+fi
 mkmf=$fv3_home/src/mkmf/bin/mkmf                                # path to executable mkmf
 sourcedir=$fv3_home/src                                         # path to directory containing model source code
 pp_path=$fv3_home/postprocessing/bin
@@ -21,14 +26,14 @@ run_script=$PWD/run_${run_name}              # path/name of this run script (for
 exp_home=$PWD                           # directory containing run/$run_script and input/
 exp_name=${exp_home##*/}                       # name of experiment (i.e., name of this model build)
 PATH="${PATH}:${pp_path}"
-
+export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:$fv3_home/bin/FMS/lib"
+echo $LD_LIBRARY_PATH
 # Test that template actually exists
 if [[ ! -f $template ]] ; then
     echo "mkmf template: $template does not exist!"
     echo "Make sure it can be found in $fv3_home/tools/mkmf_templates"
     exit 1
 fi
-
 #====================================================================================================
 # Load required environment modules (edit for different systems)
 #====================================================================================================
@@ -103,15 +108,27 @@ find "${find_args[@]}" >> $workdir/tmp_pathnames
 #====================================================================================================
 # Run mkmf to create makefile
 #====================================================================================================
+
+# compiler definitions for FMS (taken from autoconf build)
+
+CDEFS_FMS=("-DSTDC_HEADERS=1 -DHAVE_SYS_TYPES_H=1 -DHAVE_SYS_STAT_H=1 -DHAVE_STDLIB_H=1 -DHAVE_STRING_H=1\
+       -DHAVE_MEMORY_H=1 -DHAVE_STRINGS_H=1 -DHAVE_INTTYPES_H=1 -DHAVE_STDINT_H=1 -DHAVE_UNISTD_H=1\
+       -DHAVE_DLFCN_H=1 -DLT_OBJDIR=\".libs/\" -DHAVE_MPI_H=1 -DHAVE_NETCDF_H=1 -DHAVE_GETTID=1\
+       -DHAVE_SCHED_GETAFFINITY=1 -DHAVE_MOD_MPI=1 -DHAVE_MPIF_H=1 -DHAVE_MOD_NETCDF=1 \
+       -DHAVE_CRAY_POINTER=1 -DHAVE_QUAD_PRECISION=1 -DHAVE_INTERNAL_NML=1 -Duse_netCDF=1 -Duse_libMPI=1")
+
+# compiler definitions for FV3
+CDEFS_FV3=("-DHI48 -DSPMD")
+
+CDEFS=("${CDEFS_FMS[@]} ${CDEFS_FV3[@]}")
 cd $execdir
-$mkmf -p fms.x -t $template -c "-DHI_48 -Duse_libMPI -Duse_netCDF -DSPMD" -a $sourcedir\
+$mkmf -p fms.x -t $template -c "${CDEFS[@]}" -a $sourcedir\
       $workdir/tmp_pathnames
 
 #====================================================================================================
 # Compile the model
 #====================================================================================================
 make -j 4 -f Makefile
-
 if [[ $? != 0 ]] ; then
   echo Compilation failed
   exit 1
@@ -127,7 +144,8 @@ cp $fieldtable field_table
 cp $execdir/fms.x fms.x
 #--------------------------------------------------------------------------------------------------------
 # run the model with mpirun
-mpirun -np $npes fms.x
+mpirun -np $npes --bind-to core --mca btl openib,self,vader --mca btl_openib_allow_ib 1 fms.x
+
 if [[ $? != 0 ]] ; then echo "Error in model run" ; exit ; fi
 #--------------------------------------------------------------------------------------------------------
 
@@ -158,7 +176,7 @@ for File in $diagFiles ; do
   basename=${File%.*.*}
   
   mpirun -np $npes fregrid_parallel --input_mosaic $mosaic --input_file $basename --interp_method conserve_order2\
-	 --remap_file fregrid_remap_file --nlon $((res*4)) --nlat $((res*2)) --scalar_field $variables 
+	 --remap_file fregrid_remap_file --nlon $((res*4)) --nlat $((res*2)) --scalar_field $variables
    latlonfiles="$latlonfiles $basename.nc"
 done
 if [[ $? != 0 ]] ; then echo "Error in regrid" ; exit ; fi

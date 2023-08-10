@@ -42,6 +42,7 @@ exp/*/user_config
 # Executables
 *.exe
 *.out
+*.err
 *.app
 
 # Byte-compiled / optimized / DLL files
