@@ -1,7 +1,8 @@
  &main_nml
-     days = 2
-     dt_atmos = 1200 /
-
+     days = 20
+     dt_atmos = 1200
+     atmos_nthreads = 2
+/
 &fms_nml
     clock_grain = 'LOOP'
     domains_stack_size =  5000000
@@ -25,7 +26,7 @@
     ntiles = 6
     do_held_suarez = .true.
     adiabatic = .false.
-    print_freq = 6
+    print_freq = 24
     grid_type = 0
     warm_start = .false.
     vtdm4 = 0.1
@@ -41,6 +42,7 @@
     tau = 0.0
     hydrostatic = .true.
     n_sponge = 0
+    non_dilute = .false.
 /
 
 &fv_grid_nml
