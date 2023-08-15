@@ -2,3 +2,4 @@ $sourcedir/GFDL_atmos_cubed_sphere
 $sourcedir/FMS
 $sourcedir/atmos_drivers/solo
 $sourcedir/atmos_phys/atmos_shared/atmos_cmip_diag
+$sourcedir/atmos_exo

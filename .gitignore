@@ -7,6 +7,7 @@ workdir
 exec*
 srcmods
 exp/*/user_config
+src/atmos_exo/planck_tables/planck_tables
 
 #================================================================
 # Below are standard templates for C++ and python found on github

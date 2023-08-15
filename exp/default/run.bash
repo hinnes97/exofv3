@@ -1,15 +1,42 @@
 #!/bin/bash
 
 #Minimal runscript for atmospheric dynamical cores
+
+#=====================================================================================================
+# Parse command line options
+#=====================================================================================================
+
+Help()
+{ echo "Summary of command line options:"
+  echo "--------------------------------"
+  echo "-s --skip-mkmf    Skip building of Makefile and go straight to "
+  echo "                  compilation of model"
+    }
+TEMP=$(getopt -o s,h --long skip-mkmf,help -- "$@")
+
+skip_mkmf=false
+
+eval set -- "$TEMP"
+while true ; do
+    case "$1" in
+	-s|--skip-mkmf       ) skip_mkmf=true ; shift 1;;
+	-h|--help            ) Help ; exit 1 ; shift 1 ;;
+	--                   ) shift ; break ;;
+	*                    ) echo "Error parsing"; exit 1 ;;
+    esac
+done
+
 #=====================================================================================================
 # Source config -- ensure you have user_config file in this directory!
 #=====================================================================================================
+set -x 
+
 if [[ ! -f user_config ]] ; then
     echo "No file named 'user_config' found. Create one with the same format as user_config_example"
     exit 1
 fi
 source user_config
-set -x
+
 #====================================================================================================
 # Set important paths
 #====================================================================================================
@@ -104,26 +131,28 @@ find_args=($includes ${exc_cmd[@]} -prune -o \( -iname "*.f90" -o -iname "*.F90"
 set -x
 find "${find_args[@]}" >> $workdir/tmp_pathnames
 
-
+cd $execdir
 #====================================================================================================
 # Run mkmf to create makefile
 #====================================================================================================
 
 # compiler definitions for FMS (taken from autoconf build)
 
-CDEFS_FMS=("-DSTDC_HEADERS=1 -DHAVE_SYS_TYPES_H=1 -DHAVE_SYS_STAT_H=1 -DHAVE_STDLIB_H=1 -DHAVE_STRING_H=1\
+if [[ $skip_mkmf = false ]] ; then
+    CDEFS_FMS=("-DSTDC_HEADERS=1 -DHAVE_SYS_TYPES_H=1 -DHAVE_SYS_STAT_H=1 -DHAVE_STDLIB_H=1 -DHAVE_STRING_H=1\
        -DHAVE_MEMORY_H=1 -DHAVE_STRINGS_H=1 -DHAVE_INTTYPES_H=1 -DHAVE_STDINT_H=1 -DHAVE_UNISTD_H=1\
        -DHAVE_DLFCN_H=1 -DLT_OBJDIR=\".libs/\" -DHAVE_MPI_H=1 -DHAVE_NETCDF_H=1 -DHAVE_GETTID=1\
        -DHAVE_SCHED_GETAFFINITY=1 -DHAVE_MOD_MPI=1 -DHAVE_MPIF_H=1 -DHAVE_MOD_NETCDF=1 \
        -DHAVE_CRAY_POINTER=1 -DHAVE_QUAD_PRECISION=1 -DHAVE_INTERNAL_NML=1 -Duse_netCDF=1 -Duse_libMPI=1")
 
-# compiler definitions for FV3
-CDEFS_FV3=("-DHI48 -DSPMD")
+    # compiler definitions for FV3
+    CDEFS_FV3=("-DHI48 -DSPMD")
 
-CDEFS=("${CDEFS_FMS[@]} ${CDEFS_FV3[@]}")
-cd $execdir
-$mkmf -p fms.x -t $template -c "${CDEFS[@]}" -a $sourcedir\
-      $workdir/tmp_pathnames
+    CDEFS=("${CDEFS_FMS[@]} ${CDEFS_FV3[@]}")
+    
+    $mkmf -p fms.x -t $template -c "${CDEFS[@]}" -a $sourcedir\
+	  $workdir/tmp_pathnames
+fi
 
 #====================================================================================================
 # Compile the model
