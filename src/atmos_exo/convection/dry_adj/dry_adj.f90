@@ -170,7 +170,7 @@ MODULE DRY_ADJ_MOD
       dpres(:,:,1:kmax) = pres_int(:,:,2:kmax+1) - pres_int(:,:,1:kmax)
 
       ! --- Check budget
-
+!$OMP parallel do default(none) shared(jmax,imax,kmax,dtemp,dpres) private(sum_dtemp)
       do j = 1,jmax
         do i = 1,imax
 

@@ -90,8 +90,8 @@
 &exo_phys_nml
     relax_module = .false.
     do_dry_adjustment = .false.
-    do_dry_adj_el = .false.
-    do_dry_convection = .true.
+    do_dry_adj_el = .true.
+    do_dry_convection = .false.
     do_moist_H2O_adjustment = .false.
     surface_on = .true.
     do_condensation= .false.

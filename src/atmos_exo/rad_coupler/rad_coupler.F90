@@ -254,13 +254,21 @@ contains
             end do
          end do
 
-       case('ts_short_char')
-         do i = is,ie
-            do j = js,je
+      case('ts_short_char')
+!$OMP parallel do default (none) firstprivate(  &
+!$OMP                           tau_IRe,tau_Ve,mu_z,sw_a,sw_g,lw_a,lw_g,sw_a_surf,lw_a_surf,&
+!$OMP                                net_F_1D, olr_1D, net_Fs_1D, surf_lw_down_1D, surf_sw_down_1D,&
+!$OMP                                sw_down_1D) &
+!$OMP     shared(js,je,is,ie,npz,tau_IRe0, tau_Ve0, n_V, n_IR, tidally_locked, I_1D, I0, surface_on, &
+!$OMP             pe, f1, ts, pt, pl, Tint, AB, &
+!$OMP              surf_lw_down, surf_sw_down, direct_down, &
+!$OMP                                   agrid,olr, net_Fs, net_F)    
+         do j = js,je
+            do i = is,ie
 
                do k = 1, npz+1
                   tau_IRe(k) = f1*tau_IRe0 * (pe(i,j,k) / pe(i,j,npz+1)) &
-                          + (1-f1)*tau_IRe0 * (pe(i,j,k) / pe(i,j,npz+1)) **n_IR
+                       + (1-f1)*tau_IRe0 * (pe(i,j,k) / pe(i,j,npz+1)) **n_IR
                   tau_Ve(k) = tau_Ve0 * (pe(i,j,k) / pe(i,j,npz+1)) ** n_V
                end do
 
@@ -278,7 +286,7 @@ contains
                     pe(i,j,1:npz+1), tau_Ve, tau_IRe, mu_z, I_1D, Tint, AB, sw_a, sw_g, lw_a, lw_g,     &
                     sw_a_surf, lw_a_surf, net_F_1D, olr_1D, net_Fs_1D,surf_lw_down_1D,surf_sw_down_1D,sw_down_1D)
 
-               net_F(i,j,1:npz+1) = net_F_1D
+               net_F(i,j,:) = net_F_1D
                net_Fs(i,j) = net_Fs_1D
                olr(i,j) = olr_1D
                surf_lw_down(i,j) = surf_lw_down_1D

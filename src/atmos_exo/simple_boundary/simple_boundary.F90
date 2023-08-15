@@ -5,14 +5,15 @@ module simple_boundary_mod
   use mpp_mod,            only: FATAL, mpp_error, mpp_pe, stdlog, &
                                  mpp_npes, mpp_get_current_pelist
  use time_manager_mod,   only: time_type, get_date, get_time
-  use fv_grid_utils_mod,  only: g_sum
+ use fv_grid_utils_mod,  only: g_sum
+ use fv_mp_mod,          only: is_master
 
       implicit none
 !-----------------------------------------------------------------------
       logical :: rf_initialized = .false.
 
       private
-      public :: simple_boundary_tend
+      public :: simple_boundary_tend, simple_boundary_init
 
   namelist /simple_boundary_nml/ sigma_b, p0, tau_f, mix_coeff_surf, mix_coeff_atmos
 
@@ -24,6 +25,36 @@ module simple_boundary_mod
 
 contains
 
+  subroutine simple_boundary_init
+
+    integer :: f_unit, unit, ios, exists ! Namelist reading
+    character(80) :: filename
+
+    filename = "input.nml"
+    inquire(file=filename,exist=exists)
+
+!    master = gid == 0
+    if (.not. exists) then  ! This will be replaced with fv_error wrapper
+       if(is_master()) write(6,*) "file ",trim(filename)," doesn't exist"
+       call mpp_error(FATAL,'FV core terminating')
+    else
+
+       open (newunit=f_unit,file=filename)
+       ! Read initialisation namelist
+       rewind (f_unit)
+       read (f_unit,simple_boundary_nml ,iostat=ios)
+       if (ios .gt. 0) then
+          if(is_master()) write(6,*) 'simple_boundary_nml ERROR: reading ',trim(filename),', iostat=',ios
+          call mpp_error(FATAL,'FV core terminating')
+       endif
+       unit = stdlog()
+       write(unit, nml=simple_boundary_nml)
+
+       close(f_unit)
+
+    end if
+
+  end subroutine simple_boundary_init
 !-----------------------------------------------------------------------
  subroutine simple_boundary_tend(npx, npy, npz, is, ie, js, je, ng, nq,   &
                               pt, ts, ua, va, pe, delp, peln, pkz,   &
@@ -59,43 +90,16 @@ contains
 
       real, allocatable, dimension(:,:,:)   :: sigma, D_r
       integer :: i,j,k
-
-
-    integer :: f_unit, unit, ios, exists ! Namelist reading
-    character(80) :: filename
-
+    
 
 allocate(sigma   (is:ie,js:je,npz))
 allocate(D_r   (is:ie,js:je,npz))
 
-    filename = "input.nml"
-    inquire(file=filename,exist=exists)
-
-!    master = gid == 0
-    if (.not. exists) then  ! This will be replaced with fv_error wrapper
-       if(master) write(6,*) "file ",trim(filename)," doesn't exist"
-       call mpp_error(FATAL,'FV core terminating')
-    else
-
-       open (newunit=f_unit,file=filename)
-       ! Read initialisation namelist
-       rewind (f_unit)
-       read (f_unit,simple_boundary_nml ,iostat=ios)
-       if (ios .gt. 0) then
-          if(master) write(6,*) 'simple_boundary_nml ERROR: reading ',trim(filename),', iostat=',ios
-          call mpp_error(FATAL,'FV core terminating')
-       endif
-       unit = stdlog()
-       write(unit, nml=simple_boundary_nml)
-
-       close(f_unit)
-
-    end if
-
-
+!$OMP parallel do default(none) shared(npz,is,ie,js,je,sigma,pe,p0,sigma_b,D_r,tau_f,u_dt,ua,v_dt,va)
+do k = 1,npz
 do i = is,ie
 do j = js,je
-do k = 1,npz
+
 sigma(i,j,k) = pe(i,k,j) / p0
 
 if (sigma(i,j,k) < sigma_b) then
@@ -110,9 +114,10 @@ end do
 end do
 end do
 
+!$OMP parallel do default(none) shared(is,ie,js,je,npz,t_dt, ts, ts_dt,pt, mix_coeff_atmos, mix_coeff_surf)
+ do j = js,je
     do i = is,ie
-       do j = js,je
-                t_dt(i,j,npz) = t_dt(i,j,npz) + (ts(i,j) - pt(i,j,npz))/mix_coeff_atmos
+       t_dt(i,j,npz) = t_dt(i,j,npz) + (ts(i,j) - pt(i,j,npz))/mix_coeff_atmos
                 ts_dt(i,j) = ts_dt(i,j) - (ts(i,j) - pt(i,j,npz))/mix_coeff_surf
             end do
         end do
