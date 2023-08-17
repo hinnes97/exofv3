@@ -1,2 +1,3 @@
-"TRACER", "atmos_mod", "sphum"/ 
+"TRACER", "atmos_mod", "sphum"/
 "TRACER", "atmos_mod", "vapour"/
+"TRACER", "atmos_mod", "condensate"/

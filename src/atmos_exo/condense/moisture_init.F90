@@ -42,8 +42,8 @@ module moisture_init_mod
   
 contains
 
-  subroutine init_moisture(npz, is, ie, js, je, nq, q, peln, delp, pt, axes, &
-       Time, cold_start , non_dilute)
+  subroutine init_moisture(npz, is, ie, js, je, nq, q, peln, delp, pt, &
+       cold_start , non_dilute)
     !----------------------------------------------------------------------------!
     !                                                                            !
     !          Initialise moisture to saturation                                 !
@@ -55,30 +55,30 @@ contains
 
     integer, intent(in   ) :: npz                    ! No. vertical levels
     integer, intent(in   ) :: is, ie, js, je, nq      ! For array indices
-    integer, intent(in   ) :: axes(4)
     logical, intent(in   ) :: cold_start, non_dilute
     
 
-    real,    intent(inout) ::     q(is:ie,js:je,npz,nq) ! tracers
-    real,    intent(in   ) ::    pt(is:ie,js:je,npz)    ! temperature
-    real,    intent(in   ) ::  delp(is:ie,js:je,npz)    ! Pressure thickness
+    real,    intent(inout) ::     q(is:ie,js:je,1:npz,1:nq) ! tracers
+    real,    intent(in   ) ::    pt(is:ie,js:je,1:npz)    ! temperature
+    real,    intent(in   ) ::  delp(is:ie,js:je,1:npz)    ! Pressure thickness
     real,    intent(in   ) ::    peln(is:ie,1:npz+1,js:je)! Log interface p levels
-    type(time_type), intent(in) :: Time
 
 
     ! Local variables ------------------------------------------------------------
-    real :: qsat(is:ie,js:je,npz) ! Saturation concentration
-    real :: pfull(is:ie,js:je,npz) ! Pressure interface levels
-    real :: ratio(is:ie,js:je,npz)
-    real :: qc(is:ie,js:je,npz)
+    real :: qsat(is:ie,js:je,1:npz) ! Saturation concentration
+    real :: pfull(is:ie,js:je,1:npz) ! Pressure interface levels
+    real :: ratio(is:ie,js:je,1:npz)
+    real :: qc(is:ie,js:je,1:npz)
     real :: kap_loc(is:ie,js:je,1:npz)
     integer :: i,j,k
     integer :: vap, cond, sphum
     integer :: ierr, ios, f_unit, unit,ind(3)
     logical :: master
 
+
     ! Main body of function -----------------------------------------------------
     master = is_master()
+
     f_unit = get_unit()
     open (f_unit,file='input.nml')
        ! Read initialisation namelist
@@ -99,12 +99,13 @@ contains
     endif
     close(unit)
 
+!    if (is_master()) write(*,*) '2', minval(pt(is:ie,js:je,1:npz))
     allocate( lheat(is:ie,js:je,1:npz) )
 
     if(cold_start) then       
        vap = get_tracer_index(MODEL_ATMOS, 'vapour')
        cond   = get_tracer_index(MODEL_ATMOS, 'condensate' )
-
+!
        do k=1,npz
           do j=js,je
              do i=is,ie
@@ -113,33 +114,48 @@ contains
           end do
        end do
 
-       ! Get specific humidity
+!       if (is_master()) write(*,*) '3', minval(pt(is:ie,js:je,1:npz))
+!       ! Get specific humidity
        qc(is:ie,js:je,1:npz) = 0.0
+!
+!       if (is_master()) write(*,*) '4.1', minval(pt(is:ie,js:je,1:npz))
        do j=js,je
           do i=is,ie
              call q_sat(pfull(i,j,:), pt(i,j,:), qc(i,j,:), qsat(i,j,:))
           end do
        end do
+!
+!       if (is_master()) write(*,*) '4.2', minval(pt(is:ie,js:je,1:npz)), vap, cond, q0, shape(q(is:ie,js:je,:,:))
+!       if (is_master()) write(*,*) is,ie,js,je,npz,nq
+! Set q equal to a uniform, well mixed dilute limit
+
+!       
+       do k=1,npz
+          do j=js,je
+             do i=is,ie
+                q(i,j,k,vap) = min(qsat(i,j,k), q0)
+                q(i,j,k,cond) = 0.0
+             enddo
+          enddo
+       enddo
 
        
-      ! Set q equal to a uniform, well mixed dilute limit
-       q(is:ie,js:je,:,vap) = min(qsat, q0)
-          
-       q(is:ie,js:je,:,cond) = 0.0
-       if (master) then
-          write(*,*) 'INIT, MAXVAL QVAP', maxval(q(is:ie,js:je,:,vap)),&
-            'INIT, MAXVAL QCOND', maxval(q(is:ie,js:je,:,cond))
-          write(*,*) 'maxval pt, satq, p'
-          write(*,*) maxval(qsat(is:ie,js:je,1:npz)), maxval(pfull(is:ie,js:je,1:npz)), maxval(pt(is:ie,js:je,1:npz))
-          ind = maxloc(q(is:ie,js:je,1:npz,vap))
-          write(*,*) ind
-          do k=1,npz
-             write(*,*) q(ind(1), ind(2), k,vap), pt(ind(1),ind(2),k)
-          enddo
-          
-       endif
+       !q(:,:,:,cond) = 0.0
+       !q(is:ie,js:je,:,cond) = 0.0
+!       if (master) then
+!          write(*,*) 'INIT, MAXVAL QVAP', maxval(q(is:ie,js:je,:,vap)),&
+!            'INIT, MAXVAL QCOND', maxval(q(is:ie,js:je,:,cond))
+!          write(*,*) 'maxval pt, satq, p'
+!          !write(*,*) maxval(qsat(is:ie,js:je,1:npz)), maxval(pfull(is:ie,js:je,1:npz)), maxval(pt(is:ie,js:je,1:npz))
+!          ind = maxloc(q(is:ie,js:je,1:npz,vap))
+!          write(*,*) ind
+!          !do k=1,npz
+!          !   write(*,*) q(ind(1)+is-1, ind(2)+js-1, k,vap), pt(ind(1)+is-1,ind(2)+js-1,k)
+!          !enddo
+!          
+!       endif
        
-       
+!       if (is_master()) write(*,*) '4.3', minval(pt(is:ie,js:je,1:npz))
        ! Cold trap the q value
        do k=npz-1,1,-1
           do j=js,je
@@ -150,6 +166,7 @@ contains
        enddo
     endif
 
+!    if (is_master()) write(*,*) '5', minval(pt(is:ie,js:je,1:npz))
     if (non_dilute) then
        do k=1,npz
           do j=js,je
@@ -160,22 +177,20 @@ contains
           enddo
        enddo
     endif
-
-    if (master) then
-       write(*,*) 'INIT, MAXVAL QVAP 2', maxval(q(is:ie,js:je,:,vap)),&
-            'INIT, MAXVAL QCOND 2', maxval(q(is:ie,js:je,:,cond))
-       do k=1,npz
-          write(*,*) q(ind(1),ind(2),k,vap)
-       enddo
-       
-       endif
-    ! Initialise diagnostics
-    id_lheat = register_diag_field(mod_name, 'lheat', axes(1:3), Time, &
-         'Latent heating rate', 'K/s', missing_value=missing_value)
-    id_qsat = register_diag_field(mod_name, 'qsat', axes(1:3), Time, &
-         'Saturation specific humidity', 'kg/kg', missing_value=missing_value)
-
-
+!
+!    if (is_master()) write(*,*) '6', minval(pt(is:ie,js:je,1:npz))
+!    if (master) then
+!       write(*,*) 'INIT, MAXVAL QVAP 2', maxval(q(is:ie,js:je,:,vap)),&
+!            'INIT, MAXVAL QCOND 2', maxval(q(is:ie,js:je,:,cond))
+!       if (is_master()) write(*,*) '7', minval(pt(is:ie,js:je,1:npz))
+!       endif
+!    ! Initialise diagnostics
+!    id_lheat = register_diag_field(mod_name, 'lheat', axes(1:3), Time, &
+!         'Latent heating rate', 'K/s', missing_value=missing_value)
+!    id_qsat = register_diag_field(mod_name, 'qsat', axes(1:3), Time, &
+!         'Saturation specific humidity', 'kg/kg', missing_value=missing_value)
+!
+!if (is_master()) write(*,*) '8', minval(pt(is:ie,js:je,1:npz))
   end subroutine init_moisture
 
   subroutine cond_end

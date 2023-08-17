@@ -87,7 +87,7 @@ module exo_phys_mod
    logical :: rf_initialized = .false.
 
    private
-   public :: Exo_Tend, Exo_Tend_init, do_ding_convection
+   public :: Exo_Tend, Exo_Tend_init, do_ding_convection, do_dry_convection
 
    type(surf_diff_type) :: Tri_surf
 
@@ -408,7 +408,7 @@ ts_dt(is:ie,js:je) = 0.0
             end do
          end do
       endif
-      
+
       !-----------------------------------------------------------------------------------------------
       !                                    BOTTOM BOUNDARY EFFECTS
       !-----------------------------------------------------------------------------------------------
@@ -687,6 +687,14 @@ ts_dt(is:ie,js:je) = 0.0
                     t_dt_conv_ding(i,j,:), q_dt_ding(i,j,:,:), q_liq(i,j,:), q_ice(i,j,:))
             enddo
          enddo
+
+!         if (is_master()) then
+!            write(*,*) 'Post ding convection'
+!            write(*,*) maxval(abs(t_dt_conv_ding(is:ie,js:je,:))), maxval(abs(q_dt_ding(is:ie,js:je,:,vap))), maxval(abs(q_liq(is:ie,js:je,:))), maxval(abs(q_ice(is:ie,js:je,:)))
+!            write(*,*) 'STOPPING'
+!            stop
+!         endif
+         
 !         !write(*,*) 'POST DING CONVECTION'
 !         ! Calculate initial h and m
 !

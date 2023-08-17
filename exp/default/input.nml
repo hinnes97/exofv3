@@ -1,11 +1,11 @@
  &main_nml
      days = 20
-     dt_atmos = 1200
-     atmos_nthreads = 2
+     dt_atmos = 200
+     atmos_nthreads = 1
 /
 &fms_nml
     clock_grain = 'LOOP'
-    domains_stack_size =  5000000
+    domains_stack_size =  10000000
     print_memory_usage = .true.
 /
 
@@ -22,7 +22,7 @@
     layout = 2, 2
     npx = 25
     npy = 25
-    npz = 48
+    npz = 50
     ntiles = 6
     do_held_suarez = .false.
     adiabatic = .false.
@@ -31,7 +31,7 @@
     warm_start = .false.
     vtdm4 = 0.1
     io_layout = 2, 2
-    nwat = 1
+    nwat = 0
     inline_q = .true.
     nord = 2
     is_ideal_case = .true.
@@ -42,7 +42,7 @@
     tau = 0.0
     hydrostatic = .true.
     n_sponge = 0
-    non_dilute = .false.
+    non_dilute = .true.
 /
 
 &fv_grid_nml
@@ -90,24 +90,51 @@
 &exo_phys_nml
     relax_module = .false.
     do_dry_adjustment = .false.
-    do_dry_adj_el = .true.
+    do_dry_adj_el = .false.
     do_dry_convection = .false.
     do_moist_H2O_adjustment = .false.
-    surface_on = .true.
+    surface_on = .false.
     do_condensation= .false.
     tidally_locked = .true.
     cp_surf = 1.e6
     conv_timescale = 1.e3
     do_virtual = .false.
-    do_simple_bl = .true.
+    do_simple_bl = .false.
     do_vert_diff_bl = .false.
-    do_ding_convection = .false.
+    do_ding_convection = .true.
 /
 
 &rad_coupler_nml
     rad_scheme='ts_short_char'
-    I0 = 1360.0
+    I0  = 680.0
     Tint = 0.0
-    tau_IRe0 = 5.0
-    tau_Ve0  = 0.0
+    tau_IRe0 = 100
+    tau_Ve0  = 10.0
+    n_ir = 1.0
+    n_v = 1.0
+    f1 = 0.5
 /
+
+&fv_eta_nml
+    flexible_grid = .true.
+    pbot = 3.e6
+    pup = 0.1
+    plin = 10.
+/
+
+&initialisation_nml
+    init_type = 2
+    Ts = 300.
+    T_strat = 200.
+    S = 680.0
+    f = 0.25
+    tau_sw = 10
+    tau_lw = 100
+    tint =0.0
+    surface_pressure = 3.e6
+/
+
+&init_moisture_nml
+    q0 = 3.e-6
+/    
+
