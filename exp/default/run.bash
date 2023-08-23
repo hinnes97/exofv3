@@ -53,8 +53,7 @@ run_script=$PWD/run_${run_name}              # path/name of this run script (for
 exp_home=$PWD                           # directory containing run/$run_script and input/
 exp_name=${exp_home##*/}                       # name of experiment (i.e., name of this model build)
 PATH="${PATH}:${pp_path}"
-export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:$fv3_home/bin/FMS/lib"
-echo $LD_LIBRARY_PATH
+
 # Test that template actually exists
 if [[ ! -f $template ]] ; then
     echo "mkmf template: $template does not exist!"
@@ -93,10 +92,10 @@ diagtable=$PWD/diag_table           # path to diagnositics table
 fieldtable=$PWD/field_table         # path to field table (specifies tracers)
 
 if [[ ! -d $execdir ]] ; then mkdir $execdir ; fi
-if [[ -e $workdir ]] ; then
-  echo "ERROR: Existing workdir may contaminate run.  Move or remove $workdir and try again."
-  exit 1
-fi
+# if [[ -e $workdir ]] ; then
+#   echo "ERROR: Existing workdir may contaminate run.  Move or remove $workdir and try again."
+#   exit 1
+# fi
 mkdir $workdir $workdir/INPUT $workdir/RESTART
 cp -r $cwd/restart-files/* $workdir/INPUT/
 
@@ -108,28 +107,31 @@ echo "fv3_home = $fv3_home" >> $workdir/tmp_template
 #====================================================================================================
 # Prepend fortran files in srcmods directory to pathnames.
 # Use 'find' to make list of srcmod/*.f90 files. mkmf uses only the first instance of any file name.
-find $exp_home/srcmods/ -maxdepth 1 -iname "*.f90" -o -iname "*.F90" -o -iname "*.inc" -o -iname "*.c" -o -iname "*.h" > $workdir/tmp_pathnames
-echo "Using the following sourcecode modifications:"
-cat $workdir/tmp_pathnames
 
-set +x
-excludes=$fv3_home/tools/src_filter/exc_dirs # list of dirs to exclude from src search
-includes=$fv3_home/tools/src_filter/src_dirs # list of dirs to include from src search
+if [[ $skip_mkmf = false ]] ; then
+    find $exp_home/srcmods/ -maxdepth 1 -iname "*.f90" -o -iname "*.F90" -o -iname "*.inc" -o -iname "*.c" -o -iname "*.h" > $workdir/tmp_pathnames
+    echo "Using the following sourcecode modifications:"
+    cat $workdir/tmp_pathnames
 
-readarray includes < $includes
-readarray excludes < $excludes
-includes=$(eval echo ${includes[@]})
-excludes=($(eval echo ${excludes[@]}))
+    set +x
+    excludes=$fv3_home/tools/src_filter/exc_dirs # list of dirs to exclude from src search
+    includes=$fv3_home/tools/src_filter/src_dirs # list of dirs to include from src search
 
-exc_cmd=("( -path ${excludes[0]}")
-for exc in ${excludes[@]:1} ; do
-    exc_cmd+=("-o -path $exc")
-done
-exc_cmd+=(")")
+    readarray includes < $includes
+    readarray excludes < $excludes
+    includes=$(eval echo ${includes[@]})
+    excludes=($(eval echo ${excludes[@]}))
 
-find_args=($includes ${exc_cmd[@]} -prune -o \( -iname "*.f90" -o -iname "*.F90" -o -iname "*.inc" -o -iname "*.c" -o -iname "*.h" \) -print)
-set -x
-find "${find_args[@]}" >> $workdir/tmp_pathnames
+    exc_cmd=("( -path ${excludes[0]}")
+    for exc in ${excludes[@]:1} ; do
+	exc_cmd+=("-o -path $exc")
+    done
+    exc_cmd+=(")")
+
+    find_args=($includes ${exc_cmd[@]} -prune -o \( -iname "*.f90" -o -iname "*.F90" -o -iname "*.inc" -o -iname "*.c" -o -iname "*.h" \) -print)
+    set -x
+    find "${find_args[@]}" >> $workdir/tmp_pathnames
+fi
 
 cd $execdir
 #====================================================================================================
@@ -181,11 +183,12 @@ if [[ $? != 0 ]] ; then echo "Error in model run" ; exit ; fi
 #====================================================================================================
 # Combine the netcdf file from each processor to one per grid tile (6 in total for cubedsphere)
 #====================================================================================================
- if [[ $npes > 1 ]] ; then
-    for ncfile in `/bin/ls *.nc.0000` ; do
- 	mppnccombine -r -n4 ${ncfile%.*}
-    done
- fi
+  if [[ $npes > 1 ]] ; then
+     for ncfile in `/bin/ls *.nc.0000` ; do
+  	mppnccombine -r -n4 ${ncfile%.*}
+     done
+  fi
+
 # --------------------------------------------------------------------------------------------------------
 if [[ $? != 0 ]] ; then  exit ; fi
 #--------------------------------------------------------------------------------------------------------
@@ -224,17 +227,37 @@ ncks -A -v pk,bk atmos_static.tile1.nc atmos_average.nc
 #=========================================================================================
 interp_files="$workdir/atmos_daily.nc $workdir/atmos_average.nc"
 
+
 for File in $interp_files ; do
     pfull=$(ncdump -v pfull $File | sed -ne '/ pfull =/,$ p' | cut -f 2 -d '=' | cut -f 1 -d ';' | sed '$d' | sed 's/,/\ /g'| tr '\n' ' ')
-    pfull_new=
-    set +x 
-    for p in $pfull ; do
-	pfull_new="$pfull_new $(printf %.0f $(echo "$p*100"| bc -l) )"
-    done
-    set -x
-    pfull=$(echo $pfull_new | xargs)
-    (cd $pp_path ; plevel.bash -0 -a -p ''"$pfull"'' -i $File -o "${File%.*}_interp.nc")
+    pfull=($pfull)
+
+    # pfull_new=()
+
+    # for p in "${pfull[@]}" ; do
+    # 	test=$(printf %.0f $(echo "$p*100" | bc -l))
+
+    # 	if [[ "$test" != 0 && ! "${pfull_new[*]}" =~ "$test" ]] ; then
+    # 	    pfull_new=("${pfull_new[@]}" $test)
+    # 	fi
+    # done
+    
+    # pfull=("${pfull_new[@]}")
+    (cd $pp_path ; plevel.bash -0 -a -p "${pfull[*]}" -i $File -o "${File%.*}_interp.nc")
 done
+
+# for File in $interp_files ; do
+#     pfull=$(ncdump -v pfull $File | sed -ne '/ pfull =/,$ p' | cut -f 2 -d '=' | cut -f 1 -d ';' | sed '$d' | sed 's/,/\ /g'| tr '\n' ' ')
+    
+#     pfull_new=
+#     set +x 
+#     for p in $pfull ; do
+# 	pfull_new="$pfull_new $(printf %.0f $(echo "$p*100"| bc -l) )"
+#     done
+#     set -x
+#     pfull=$(echo $pfull_new | xargs)
+#     (cd $pp_path ; plevel.bash -0 -a -p ''"$pfull"'' -i $File -o "${File%.*}_interp.nc")
+# done
 if [[ $? != 0 ]] ; then echo "Error in vertical interpolation" ; exit ; fi
 
 #=========================================================================================
