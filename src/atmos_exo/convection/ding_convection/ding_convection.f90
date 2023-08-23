@@ -9,6 +9,7 @@ module ding_convection
   use constants_mod, only: grav, rvgas
   use field_manager_mod,  only: MODEL_ATMOS
   use fv_mp_mod, only: is_master
+  use omp_lib
   
   implicit none
   
@@ -50,7 +51,7 @@ contains
     !==========================================================================
 
     real, intent(inout) :: t_dt_ding(:)   ! Temperature tendency
-    real, intent(inout) :: q_dt_ding(:,:) ! Condensate and 
+    real, intent(inout) :: q_dt_ding(:) ! Condensate and 
     real, intent(inout) :: q_liq(:), q_ice(:)
 
     !==========================================================================
@@ -196,7 +197,7 @@ contains
     enddo ! do n=1,N_iter
 
     t_dt_ding = T_tmp - T
-    q_dt_ding(:,iv) = qv_tmp - q(:,iv)
+    q_dt_ding(:) = qv_tmp - q(:,iv)
     q_ice = qi_tmp
     q_liq = qc_tmp
     !q_dt_ding(:,ic) = qc_tmp !- q(:,ic)
@@ -566,11 +567,11 @@ contains
   end subroutine k_adj
 
     
-  subroutine large_scale_cond(p, T, q, qc, qi, q_dt, t_dt_lsc)
+  subroutine large_scale_cond(p, T, qv, qc, qi, q_dt_lsc, t_dt_lsc)
     real, intent(in) :: p(:)
-    real, intent(in) :: T(:), q(:,:)
+    real, intent(in) :: T(:), qv(:)
     real, intent(inout) :: qc(:), qi(:)
-    real, intent(inout) :: q_dt(:,:)
+    real, intent(inout) :: q_dt_lsc(:)
     real, intent(out) :: t_dt_lsc(:)
 
     ! Local variables
@@ -582,17 +583,20 @@ contains
     real :: q_cond
     real :: T_tmp(size(p)), qv_tmp(size(p)), qc_tmp(size(p)), qi_tmp(size(p))
 
+    real :: mbef, maft
     ! Take into account tendencies from Ding Convection
     T_tmp = T
-    qv_tmp = q(:,iv) + q_dt(:,iv)
+    qv_tmp = qv 
     qc_tmp = qc !q(:,ic) + q_dt(:,ic)
     qi_tmp = qi
     
     npz = size(p)
+
     do k=1,npz
 
        !call get_xh2o(qv_tmp(k), qi_tmp(k) + qc_tmp(k), x)
        qt = qc_tmp(k) + qv_tmp(k) + qi_tmp(k)
+       mbef = qt
        q_cond = qc_tmp(k) + qi_tmp(k)
        !call sat_vp(T_tmp(k), psat)
        
@@ -702,12 +706,18 @@ contains
           
           
        endif
+
+       maft = qi_tmp(k) + qc_tmp(k) + qv_tmp(k)
+       if (abs(mbef - maft)/mbef .gt. 1.e-10) then
+          write(*,*) 'k, mbef, maft'
+          write(*,*) k, mbef, maft
+       endif
        
     enddo
 
     ! Update tendencies with large scale condensation
     t_dt_lsc = T_tmp - T
-    q_dt(:,iv) = qv_tmp - q(:,iv)
+    q_dt_lsc = qv_tmp - qv
     !q_dt(:,ic) = qi_tmp + qc_tmp - (qc + qi)
     qi = qi_tmp
     qc = qc_tmp
@@ -861,17 +871,18 @@ contains
     
   end subroutine rain_out_simple
 
-  subroutine rain_out_revap(T, p, delp, qv, ql, qi, q_dt, dT)
+  subroutine rain_out_revap(T, p, delp, qv, ql, qi, q_dt_rainout, dT, i_loc, j_loc, is,js)
     real, intent(in) :: T(:), p(:), delp(:), qv(:)
-    real, intent(inout) :: q_dt(:,:), ql(:), qi(:)
+    real, intent(inout) :: q_dt_rainout(:), ql(:), qi(:)
     real, intent(out) :: dT(:)
     !real, intent(out) :: t_tmp(:), qv_tmp(:)
-    
+    integer, intent(in) :: i_loc, j_loc, is, js
     real, dimension(size(p)) :: ql_tmp, qi_tmp, T_tmp, qv_tmp
     real :: small, T_cond, satq, delT, T_guess, Tgp, Tgm
     real :: h0, hcond, hgas, hnew, hp, hm, diff, md, mv, mv_new, m_cond, m_evap
-    real :: hsmall, hsmall0, hcond0, hbef,haft, htmp, h_k0, h_l0, h_k, h_l, h_dry, h_c, h_also
+    real :: hsmall,  hbef,haft, htmp, h_k0, h_l0, h_k, h_l, h_dry, h_c, h_also, mbef_i, mbef_l, mbef_v
     real :: m_i, m_f
+    real :: maft_v
     real:: fi, f, fp, fm
 
     
@@ -882,31 +893,53 @@ contains
     logical :: l_evap
     ! Add on tendencies from previous parts of the condensation scheme
 
-    T_tmp = T 
-    ql_tmp = ql
-    qi_tmp = qi
-    qv_tmp = qv + q_dt(:,iv)
+!    T_tmp = T 
+!    ql_tmp = ql
+!    qi_tmp = qi
+!    qv_tmp = qv 
 
 
-    m_ds = (1 - qv_tmp - ql_tmp - qi_tmp)*delp
-    m_vs = qv_tmp*delp
-    m_ls = ql_tmp*delp
-    m_is = qi_tmp*delp
+    npz = size(T)
+    dT = 0.0
     
+    do k=1,npz
+       T_tmp(k) = T(k)
+       ql_tmp(k) = ql(k)
+       qi_tmp(k) = qi(k)
+       qv_tmp(k) = qv(k)
+       m_ds(k) = (1. - qv_tmp(k) - ql_tmp(k) - qi_tmp(k))*delp(k)
+       m_vs(k) = qv_tmp(k)*delp(k)
+       m_ls(k) = ql_tmp(k)*delp(k)
+       m_is(k) = qi_tmp(k)*delp(k)
+    enddo
+
     small = 1.e-20
 
     l_evap = .false.
     
-    npz = size(T)
+
 !!$ =====================================================================================
 !!$ Uncomment for enthalpy diagnostics
 !!$ =====================================================================================    
-    hbef = 0.0
-    do k=1,npz
-       !call calc_enthalpy_mass(T_tmp(k), m_ds(k), m_vs(k), m_ls(k), m_is(k), htmp)
-       call calc_enthalpy(T_tmp(k), qv_tmp(k), ql(k), qi(k), htmp)
-       hbef = hbef + htmp*delp(k)
-    enddo
+!    hbef = 0.0
+!    
+!    mbef_i = 0.0
+!    mbef_v = 0.0
+!    mbef_l = 0.0
+!    do k=1,npz
+!       mbef_i = mbef_i + m_is(k)
+!       mbef_l = mbef_l + m_ls(k)
+!       mbef_v = mbef_v + m_vs(k)
+!    
+!    enddo
+    
+
+!if (is_master() ) write(*,*) shape(m_is), shape(m_vs), shape(m_ls)
+!    do k=1,npz
+!       !call calc_enthalpy_mass(T_tmp(k), m_ds(k), m_vs(k), m_ls(k), m_is(k), htmp)
+!       call calc_enthalpy(T_tmp(k), qv_tmp(k), ql(k), qi(k), htmp)
+!       hbef = hbef + htmp*delp(k)
+!    enddo
 !!$ ====================================================================================
 
     delqv = 0.0
@@ -919,6 +952,24 @@ contains
        if ( ql_tmp(k) .gt. small .or. qi_tmp(k) .gt. small) then
           ! Condensate! Attempt re-evaporation
 
+          if (is_master() .and. omp_get_thread_num() .eq. 1) then
+             
+!             write(*,*) 'k = ', k
+!             write(*,*) 'cond amount', ql_tmp(k), qi_tmp(k)
+
+!
+!             if (k .eq. npz) then
+!                writE(*,*) '-----------------------------------------'
+!                write(*,*) 'k = npz'
+!                write(*,*) 'temp = ', T_tmp(k)
+!                call q_sat_single(p(k), T_tmp(k), ql_tmp(k) + qi_tmp(k), satq)
+!                
+!                write(*,*) ' qsat = ', satq
+!                write(*,*) ' qv(k) =  ',qv_tmp(k), qv_tmp(k)/satq
+!                write(*,*) '------------------------------------------'
+!             endif
+             
+          endif
           T_cond = T_tmp(k)
           m_cond = (ql_tmp(k) + qi_tmp(k))*delp(k)
           m_cond = m_ls(k) + m_is(k)
@@ -937,6 +988,7 @@ contains
                 ! Re-evaporate!
                 ! First attempt to re-evaporate all the condensate in this layer
 
+!                if (is_master() .and. omp_get_thread_num() .eq. 1) write(*,*) 'revap into layer ', l
                 ! Condensate falling out of layer
                 l_evap = .true.
                 delqi(k) = -qi(k)
@@ -1005,7 +1057,8 @@ contains
                       dT(l) = T_tmp(l) - T(l)
                       qv_tmp(l) = qv_tmp(l) + m_cond/delp(l)
                       m_vs(l) = m_vs(l) + m_cond
-                      q_dt(l,iv) = qv_tmp(l) - qv(l)
+                      q_dt_rainout(l) = qv_tmp(l) - qv(l)
+
 !!$                      write(*,*) 'qv_tmp(l) vs new'
 !!$                      write(*,*) l, qv_tmp(l), m_vs(l)/(m_vs(l) + md), qv_tmp(l)/(1. + delqv(l))
 !!$                      write(*,*) l, qv_tmp(l)*delp(l), m_vs(l)
@@ -1013,7 +1066,14 @@ contains
                       m_is(k) = 0.0
                       m_ls(k) = 0.0
 
-                      ! Move onto next layer with condensate
+                     ! Move onto next layer with condensate
+!                      if (is_master() .and. omp_get_thread_num() .eq. 1) then
+!                         write(*,*) 'success'
+!                         write(*,*) 'k = ', k
+!                         write(*,*) 'l = ', l
+!                         write(*,*) 'ql(k) = ', ql(k)
+!                         write(*,*) 'qi(k) = ', qi(k)
+!                      endif
                       exit
                       
                    else if (l .eq. npz) then
@@ -1168,27 +1228,39 @@ contains
 
     ! ========================================================
     ! Uncomment for enthalpy diagnostics
-!!$    if (l_evap) then
-!!$    haft = 0.0
-!!$    h_also = 0.0
-!!$    do m=1,npz
-!!$       call calc_enthalpy_mass(T_tmp(m), m_ds(m), m_vs(m), m_ls(m), m_is(m), htmp)
-!!$       h_also  = h_also + htmp
-!!$       call calc_enthalpy(T_tmp(m), qv_tmp(m)/(1. + delqv(m) + delql(m) + delqi(m)),&
-!!$            ql(l)/(1. + delqv(m) + delql(m) + delqi(m)),&
-!!$            qi(l)/(1. + delqv(m) + delql(m) + delqi(m)),&
-!!$            htmp)
-!!$       haft = haft+htmp*delp(m)*(1 + delqv(m) + delql(m) + delqi(m))
-!!$!       write(*,*) 'm', m, qv_tmp(m)/(1+ delqv(m) + delql(m) + delqi(m)), m_vs(m)/(m_ds(m) + m_ls(m) + m_is(m) + m_vs(m)), qv_tmp(m)
-!!$    enddo
-!!$    write(*,*) 'enthalpy change ', hbef, haft, h_also, abs((haft - hbef)/hbef)
-!!$    write(*,*) 'Testing dq'
-!!$    do m=1,npz
-!!$
-!!$       write(*,*) m, delqv(m), delql(m), delqi(m), delqv(m) + delql(m) + delqi(m), q_dt(m, iv)
-!!$    enddo
-!!$    
-!!$    endif
+    if (is_master() ) then
+    haft = 0.0
+    h_also = 0.0
+    maft_v = 0.0
+    do m=1,npz
+       call calc_enthalpy_mass(T_tmp(m), m_ds(m), m_vs(m), m_ls(m), m_is(m), htmp)
+       h_also  = h_also + htmp
+       call calc_enthalpy(T_tmp(m), qv_tmp(m)/(1. + delqv(m) + delql(m) + delqi(m)),&
+            ql(l)/(1. + delqv(m) + delql(m) + delqi(m)),&
+            qi(l)/(1. + delqv(m) + delql(m) + delqi(m)),&
+            htmp)
+       haft = haft+htmp*delp(m)*(1 + delqv(m) + delql(m) + delqi(m))
+       !write(*,*) 'm', m, qv_tmp(m)/(1+ delqv(m) + delql(m) + delqi(m)), m_vs(m)/(m_ds(m) + m_ls(m) + m_is(m) + m_vs(m)), qv_tmp(m)
+       maft_v = maft_v + delp(m)*qv_tmp(m)
+    enddo
+!    if (i_loc ==is .and. j_loc ==js) then
+!       write(*,*) '------------------------------------------------------------'
+!       write(*,*) 'enthalpy change ', hbef, haft, h_also, abs((haft - hbef)/hbef)
+!       write(*,*) 'masses', mbef_v, mbef_i, mbef_l
+!       write(*,*) 'mass after',  mbef_v + mbef_i + mbef_l, maft_v
+!       write(*,*) 'l_evap', l_evap
+!       write(*,*) 't_dt_rainout', minval(dT)
+!       do k=1,npz
+!          write(*,*) k, delqv(k), delql(k), delqi(k), delql(k)+delqi(k)
+!       enddo
+!       write(*,*) ' -       -          -           -              -           - '
+!    endif
+    !    write(*,*) 'Testing dq'
+!    do m=1,npz
+!
+!       write(*,*) m, delqv(m), delql(m), delqi(m), delqv(m) + delql(m) + delqi(m), q_dt_rainout(m)
+!    enddo
+ endif
     ! ========================================================
 
 

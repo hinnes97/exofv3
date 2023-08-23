@@ -80,7 +80,9 @@ module exo_phys_mod
    use FMS_dry_adj_Ray, only: Ray_dry_adj
 
    use ding_convection, only: ding_adjust, rain_out_simple, large_scale_cond,&
-                              ding_adjust_init, rain_out_revap, calc_enthalpy
+        ding_adjust_init, rain_out_revap, calc_enthalpy
+
+   use omp_lib
 
    implicit none
 
@@ -145,7 +147,8 @@ contains
 
 
    subroutine Exo_Tend(npx, npy, npz, is, ie, js, je, ng, nq, u, v, w, pt, q, ts, pe, delp, peln, pkz, dt_atmos, ua, va, u_dt, v_dt,&
-      t_dt, ts_dt, q_dt, agrid, delz, hydrostatic, ak, bk, ks, strat, rayf, master, non_dilute, Time)
+        t_dt, ts_dt, q_dt, agrid, delz, hydrostatic, ak, bk, ks, strat, rayf, master, non_dilute, Time, &
+        q_correct)
 
       integer, intent(IN   ) :: npx, npy, npz
       integer, intent(IN   ) :: is, ie, js, je, ng, nq
@@ -185,6 +188,9 @@ contains
       real, intent(INOUT):: u_dt(is-ng:ie+ng,js-ng:je+ng,npz)
       real, intent(INOUT):: v_dt(is-ng:ie+ng,js-ng:je+ng,npz)
       real, intent(INOUT):: t_dt(is:ie,js:je,npz)
+
+      real, intent(out) :: q_correct(is:ie,js:je,npz)
+      
 !    real :: t_dt_rad(is:ie,js:je,npz)
       real :: u_dt_diff(is:ie,js:je,npz)
       real :: v_dt_diff(is:ie,js:je,npz)
@@ -196,7 +202,9 @@ contains
       real :: t_dt_conv(is:ie,js:je,npz)
       real :: t_dt_conv_moist(is:ie,js:je,npz)
       real :: t_dt_conv_ding(is:ie,js:je,npz)
-      real :: q_dt_ding(is:ie,js:je,npz,nq), q_dt_ding_test(is:ie,js:je,npz,nq)
+      real :: q_dt_ding(is:ie,js:je,npz), q_dt_ding_test(is:ie,js:je,npz,nq)
+      real :: q_dt_ding_vap(is:ie,js:je,npz)
+      real :: q_dt_lsc(is:ie,js:je,npz), q_dt_rainout(is:ie,js:je,npz)
       real :: t_dt_lsc(is:ie,js:je,npz), t_dt_rainout(is:ie,js:je,npz)
       
       ! Create these arrays locally because will be rained out immediately
@@ -598,7 +606,10 @@ ts_dt(is:ie,js:je) = 0.0
       t_dt_conv_ding(is:ie,js:je,:) = 0.0
       t_dt_lsc(is:ie,js:je,:) = 0.0
       t_dt_rainout(is:ie,js:je,:) = 0.0
-      q_dt_ding(is:ie,js:je,:,:)  = 0.0
+      q_dt_ding(is:ie,js:je,:)  = 0.0
+      q_dt_lsc(is:ie,js:je,:) = 0.0
+      q_dt_ding_vap(is:ie,js:je,:) = 0.0
+      q_dt_rainout(is:ie,js:je,:) = 0.0
       
       if (do_dry_adjustment) then
 
@@ -665,29 +676,48 @@ ts_dt(is:ie,js:je) = 0.0
          enddo
          vap = get_tracer_index(MODEL_ATMOS, 'vapour')
 
-!         ! Calculate initial h and m
-!         h_col(is:ie,js:je) = 0.0
-!         m_col(is:ie,js:je) = 0.0
-!         Do i = is,ie
-!           do j=js,je
-!               do k=1,npz
-!                  call calc_enthalpy(pt(i,j,k), q(i,j,k,vap), 0.0,0.0, htmp)
-!                  h_col(i,j) = h_col(i,j) + htmp*delp(i,j,k)
-!
-!                  m_col(i,j) = m_col(i,j) + q(i,j,k,vap)*delp(i,j,k)
-!               enddo
-!            enddo
-!         enddo
-!
-!$OMP parallel do default(none) shared(is,ie,js,je,p_mid, delp, pt, q, t_dt_conv_ding, q_dt_ding ,q_liq,&
-!$OMP                               q_ice)         
-         do j=js,je
-            do i=is,ie
-               call ding_adjust(p_mid(i,j,:), delp(i,j,:), pt(i,j,:), q(i,j,:,:), &
-                    t_dt_conv_ding(i,j,:), q_dt_ding(i,j,:,:), q_liq(i,j,:), q_ice(i,j,:))
+         ! Calculate initial h and m
+         h_col(is:ie,js:je) = 0.0
+         m_col(is:ie,js:je) = 0.0
+         Do i = is,ie
+           do j=js,je
+               do k=1,npz
+                  call calc_enthalpy(pt(i,j,k), q(i,j,k,vap), 0.0,0.0, htmp)
+                  h_col(i,j) = h_col(i,j) + htmp*delp(i,j,k)
+
+                  m_col(i,j) = m_col(i,j) + q(i,j,k,vap)*delp(i,j,k)
+               enddo
             enddo
          enddo
 
+!$OMP parallel do default(none) shared(is,ie,js,je,p_mid, delp, pt, q, t_dt_conv_ding ,q_liq,&
+!$OMP                               q_ice, q_dt_ding_vap)         
+         do j=js,je
+            do i=is,ie
+               call ding_adjust(p_mid(i,j,:), delp(i,j,:), pt(i,j,:), q(i,j,:,:), &
+                    t_dt_conv_ding(i,j,:), q_dt_ding_vap(i,j,:), q_liq(i,j,:), q_ice(i,j,:))
+            enddo
+         enddo
+
+! Keep condensate from ding convection in special variable
+! Explanation -- we need to track mass lost from each layer to conserve enthalpy and mass
+! In the ding_adjust routine mass is mixed between layers and the layers are reindexed
+! to retain their initial mass. Therefore any increase/decrease in condensate/vapour does not actually
+! result in a change in layer mass. The only process that does do this is the fall out of the condensate
+! In the large scale condensation routine (no mixing between layers), the increase in condensate is
+! balanced identically by a decrease in vapour. Then when the condensate falls out, this decrease in
+! vapour content corresponds to the mass decrease of the layer. This is not the case for the ding
+! routine where in a reindexed layer decrease in vapour != increase in condensate
+
+         !$OMP parallel do default(none) shared(is,ie,js,je,npz,q_correct, q_ice, q_liq, q_dt_ding_vap)
+         do k=1,npz
+            do j=js,je
+               do i=is,ie
+                  q_correct(i,j,k) = q_liq(i,j,k) + q_ice(i,j,k) + q_dt_ding_vap(i,j,k)
+               enddo
+            enddo
+         enddo
+         
 !         if (is_master()) then
 !            write(*,*) 'Post ding convection'
 !            write(*,*) maxval(abs(t_dt_conv_ding(is:ie,js:je,:))), maxval(abs(q_dt_ding(is:ie,js:je,:,vap))), maxval(abs(q_liq(is:ie,js:je,:))), maxval(abs(q_ice(is:ie,js:je,:)))
@@ -701,101 +731,110 @@ ts_dt(is:ie,js:je) = 0.0
 !         ! Add these tendencies to moisture and reset, because we don't want dynamical core to change delp
 !         ! as a result of these dq
 
-!$OMP parallel do default(none) shared(is,ie,js,je,npz,vap,q,q_dt_ding,cond,q_liq,q_ice, dt_atmos)
-         do k=1,npz
-            do j=js,je
-               do i=is,ie
-                  q(i,j,k,vap) = q(i,j,k,vap) + q_dt_ding(i,j,k, vap)
-                  q_dt_ding(i,j,k,vap) = 0.0
+!!$OMP parallel do default(none) shared(is,ie,js,je,npz,vap,q,q_dt_ding,cond,q_liq,q_ice, dt_atmos)
+         !do k=1,npz
+         !   do j=js,je
+         !      do i=is,ie
+                  !===================================================================
+                  ! OLD code, get rid of this so we can have no "cond" since it is all rained out anyway
+                  !q(i,j,k,vap) = q(i,j,k,vap) + q_dt_ding(i,j,k, vap)
+                  !q_dt_ding(i,j,k,vap) = 0.0
 
-! Add negative here in anticipation of this being rained out
-                  cond = get_tracer_index(MODEL_ATMOS, 'condensate')
-                  q_dt_ding(i,j,k,cond) = q_dt_ding(i,j,k,cond) - q_liq(i,j,k) -  q_ice(i,j,k)
-                  q(i,j,k, cond) = -q_dt_ding(i,j,k,cond)/dt_atmos + 1.e-10
-               enddo
-            enddo
-         enddo
+                  
+                  ! Add negative here in anticipation of this being rained out
+                  !cond = get_tracer_index(MODEL_ATMOS, 'condensate')
+                  !q_dt_ding(i,j,k,cond) = q_dt_ding(i,j,k,cond) - q_liq(i,j,k) -  q_ice(i,j,k)
+                  !q(i,j,k, cond) = -q_dt_ding(i,j,k,cond)/dt_atmos + 1.e-10
+                  ! ====================================================================================
+         !      enddo
+         !   enddo
+         !enddo
 
 
-!         !! =========================================================================================
-!         !! Uncomment for mass and enthalpy diagnostics
+         !! =========================================================================================
+         !! Uncomment for mass and enthalpy diagnostics
 !         h_col_new(is:ie,js:je) = 0.0
 !         m_col_new(is:ie,js:je) = 0.0
 !         Do i = is,ie
 !            do j=js,je
 !               do k=1,npz
-!                  call calc_enthalpy(pt(i,j,k) + t_dt_conv_ding(i,j,k), q(i,j,k,vap) + q_dt_ding(i,j,k,vap), q_liq(i,j,k),&
+!                  call calc_enthalpy(pt(i,j,k) + t_dt_conv_ding(i,j,k), q(i,j,k,vap) + q_dt_ding_vap(i,j,k), q_liq(i,j,k),&
 !                       q_ice(i,j,k), htmp)
 !                  h_col_new(i,j) = h_col_new(i,j) + htmp*delp(i,j,k)
 !
 !                  m_col_new(i,j) = m_col_new(i,j) + &
-!                       (q(i,j,k,vap) + q_dt_ding(i,j,k,vap) + q_liq(i,j,k) + q_ice(i,j,k))*delp(i,j,k)
+!                       (q(i,j,k,vap) + q_dt_ding_vap(i,j,k) + q_liq(i,j,k) + q_ice(i,j,k))*delp(i,j,k)
 !               enddo
 !            enddo
 !         enddo
 !
-!         write(*,*) 'Ding convection mass and enthalpy change'
-!         write(*,*) 'Enthalpy: ', maxval(abs((h_col_new(is:ie,js:je) - h_col(is:ie,js:je))/h_col(is:ie,js:je)))
-!         write(*,*) 'H2O mass: ', maxval(abs((m_col_new(is:ie,js:je)-m_col(is:ie,js:je))/m_col(is:ie,js:je)))
+!         if (is_master()) then
+!            write(*,*) 'Ding convection mass and enthalpy change'
+!            write(*,*) 'Enthalpy: ', maxval(abs((h_col_new(is:ie,js:je) - h_col(is:ie,js:je))/h_col(is:ie,js:je)))
+!            write(*,*) 'H2O mass: ', maxval(abs((m_col_new(is:ie,js:je)-m_col(is:ie,js:je))/m_col(is:ie,js:je)))
+!         endif
 !
 !         h_col(is:ie,js:je) = h_col_new(is:ie,js:je)
 !         m_col(is:ie,js:je) = m_col_new(is:ie,js:je)
-!         !! =========================================================================================
+         !! =========================================================================================
 !                     
 !      !-----------------------------------------------------------------------------------------------
 !      !                                    LARGE-SCALE CONDENSATION
 !      !-----------------------------------------------------------------------------------------------
-!$OMP parallel do default(none) shared(is,ie,js,je,p_mid,pt,t_dt_conv_ding,q,q_liq,q_ice,q_dt_ding,&
-!$OMP                               t_dt_lsc)         
+!$OMP parallel do default(none) shared(is,ie,js,je,p_mid,pt,t_dt_conv_ding,q,q_liq,q_ice,q_dt_ding_vap,&
+!$OMP                               t_dt_lsc, q_dt_lsc, vap)         
          do j=js,je
             do i=is,ie
                call large_scale_cond(p_mid(i,j,:), pt(i,j,:) + t_dt_conv_ding(i,j,:), &
-                    q(i,j,:,:), q_liq(i,j,:), q_ice(i,j,:), &
-                    q_dt_ding(i,j,:,:), t_dt_lsc(i,j,:))
+                    q(i,j,:,vap) + q_dt_ding_vap(i,j,:), q_liq(i,j,:), q_ice(i,j,:), &
+                    q_dt_lsc(i,j,:), t_dt_lsc(i,j,:))
 
 
             enddo
          enddo
-!         !! =========================================================================================
-!         !! Uncomment for enthalpy and mass diagnostics
+         !! =========================================================================================
+         !! Uncomment for enthalpy and mass diagnostics
 !         h_col_new(is:ie,js:je) = 0.0
 !         m_col_new(is:ie,js:je) = 0.0
 !         Do i = is,ie
 !            do j=js,je
 !               do k=1,npz
 !                  call calc_enthalpy(pt(i,j,k) + t_dt_conv_ding(i,j,k)+ t_dt_lsc(i,j,k), &
-!                        q(i,j,k,vap) + q_dt_ding(i,j,k,vap), q_liq(i,j,k),&
+!                        q(i,j,k,vap) + q_dt_ding_vap(i,j,k) + q_dt_lsc(i,j,k), q_liq(i,j,k),&
 !                       q_ice(i,j,k), htmp)
 !                 h_col_new(i,j) = h_col_new(i,j) + htmp*delp(i,j,k)
 !
 !                  m_col_new(i,j) = m_col_new(i,j) + &
-!                       (q(i,j,k,vap) + q_dt_ding(i,j,k,vap) + q_liq(i,j,k) + q_ice(i,j,k))*delp(i,j,k)
+!                       (q(i,j,k,vap) +  q_dt_ding_vap(i,j,k) + q_dt_lsc(i,j,k) + q_ice(i,j,k) + q_liq(i,j,k))*delp(i,j,k)
 !               enddo
 !            enddo
 !        enddo
 !
-!         write(*,*) 'LSC mass and enthalpy change'
-!         write(*,*) 'Enthalpy: ', maxval(abs((h_col_new(is:ie,js:je) - h_col(is:ie,js:je))/h_col(is:ie,js:je)))
-!         write(*,*) 'H2O mass: ', maxval(abs((m_col_new(is:ie,js:je)-m_col(is:ie,js:je))/m_col(is:ie,js:je)))
-!
+!        if (is_master()) then
+!           write(*,*) 'LSC mass and enthalpy change'
+!           write(*,*) 'Enthalpy: ', maxval(abs((h_col_new(is:ie,js:je) - h_col(is:ie,js:je))/h_col(is:ie,js:je)))
+!           write(*,*) 'H2O mass: ', maxval(abs((m_col_new(is:ie,js:je)-m_col(is:ie,js:je))/m_col(is:ie,js:je)))
+!        endif
+!        
 !         h_col(is:ie,js:je) = h_col_new(is:ie,js:je)
 !         m_col(is:ie,js:je) = m_col_new(is:ie,js:je)
 ! ====================================================================================================
 !
+
 !$OMP parallel do default(none) shared(is,ie,js,je,pt,t_dt_conv_ding,t_dt_lsc,p_mid,delp,q,vap,q_liq, &
-!$OMP                               q_ice, q_dt_ding, t_dt_rainout)  
+!$OMP                               q_ice, q_dt_ding_vap, t_dt_rainout, q_dt_rainout, q_dt_lsc)  
          do j=js,je
             do i=is,ie
                call rain_out_revap(pt(i,j,:) + t_dt_conv_ding(i,j,:) + t_dt_lsc(i,j,:), &
-                    p_mid(i,j,:), delp(i,j,:), q(i,j,:,vap), &
-                    q_liq(i,j,:), q_ice(i,j,:), q_dt_ding(i,j,:,:), t_dt_rainout(i,j,:))
+                    p_mid(i,j,:), delp(i,j,:), q(i,j,:,vap) + q_dt_ding_vap(i,j,:) + q_dt_lsc(i,j,:), &
+                    q_liq(i,j,:), q_ice(i,j,:), q_dt_rainout(i,j,:), t_dt_rainout(i,j,:), i, j, is, js)
 
             enddo
          enddo
-!
-!         !! =========================================================================================
-!         !! Uncomment for enthalpy diagnostics
-!         
+
+         !! =========================================================================================
+         !! Uncomment for enthalpy diagnostics
+         
 !         h_col_new(is:ie,js:je) = 0.0
 !         m_col_new(is:ie,js:je) = 0.0
 !         Do i = is,ie
@@ -804,45 +843,55 @@ ts_dt(is:ie,js:je) = 0.0
 !
 !                  ! Account for the change in layer masses, especially for enthalpy !
 !                  call calc_enthalpy(pt(i,j,k) + t_dt_conv_ding(i,j,k) + t_dt_lsc(i,j,k) + t_dt_rainout(i,j,k), &
-!                       (q(i,j,k,vap) + q_dt_ding(i,j,k,vap))/(1. + q_dt_ding(i,j,k,vap) + q_dt_ding(i,j,k,cond)),&
-!                       q_liq(i,j,k)/(1. + q_dt_ding(i,j,k,vap) + q_dt_ding(i,j,k,cond)), &
-!                       q_ice(i,j,k)/(1. + q_dt_ding(i,j,k,vap) + q_dt_ding(i,j,k,cond)), &
+!                       (q(i,j,k,vap) + q_dt_ding_vap(i,j,k) + q_dt_lsc(i,j,k) + q_dt_rainout(i,j,k)) / &
+!                  (1.  +q_dt_ding_vap(i,j,k) + q_dt_lsc(i,j,k) + q_dt_rainout(i,j,k) - q_correct(i,j,k)) , &
+!                       q_liq(i,j,k)/(1.  + q_dt_ding_vap(i,j,k) + q_dt_lsc(i,j,k) + q_dt_rainout(i,j,k) - q_correct(i,j,k)), &
+!                       q_ice(i,j,k)/(1. + q_dt_ding_vap(i,j,k) + q_dt_lsc(i,j,k) + q_dt_rainout(i,j,k) - q_correct(i,j,k)), &
 !                       htmp)
 !                  !call calc_enthalpy(pt(i,j,k) + t_dt_conv_ding(i,j,k), q(i,j,k,vap) + q_dt_ding(i,j,k,vap), q_liq(i,j,k),&
 !                  !     q_ice(i,j,k), htmp)
-!                  h_col_new(i,j) = h_col_new(i,j) + htmp*delp(i,j,k)*(1 + q_dt_ding(i,j,k,vap) + q_dt_ding(i,j,k,cond))
+!                  h_col_new(i,j) = h_col_new(i,j) + htmp*delp(i,j,k)*(1. + q_dt_ding_vap(i,j,k) + q_dt_lsc(i,j,k) + q_dt_rainout(i,j,k) - q_correct(i,j,k))
 !
 !                  ! Note we don't have to bother here because alterations to q and delp cancel out
 !                  ! to conserve q*dp (but won't conserve enthalpy calculation because of dry enthalpy!)
 !                  m_col_new(i,j) = m_col_new(i,j) + &
-!                       (q(i,j,k,vap) + q_dt_ding(i,j,k,vap) + q_liq(i,j,k) + q_ice(i,j,k))*delp(i,j,k)
+!                       (q(i,j,k,vap)  + q_dt_ding_vap(i,j,k) +  q_dt_lsc(i,j,k) + q_dt_rainout(i,j,k) - q_correct(i,j,k))*delp(i,j,k)
 !               enddo
 !            enddo
 !         enddo
 !
-!         write(*,*) 'Rain out mass and enthalpy change'
-!         write(*,*) 'Enthalpy: ', maxval(abs((h_col_new(is:ie,js:je) - h_col(is:ie,js:je))/h_col(is:ie,js:je)))
-!         write(*,*) 'H2O mass: ', maxval(abs((m_col_new(is:ie,js:je)-m_col(is:ie,js:je))/m_col(is:ie,js:je)))
-!         write(*,*) 'maxval qliq,qice', maxval(q_liq(is:ie,js:je,1:npz)), maxval(q_ice(is:ie,js:je,1:npz))
+!         if (is_master()) then
+!            write(*,*) '======================================================================================='
+!            write(*,*) 'Rain out mass and enthalpy change'
+!            write(*,*) 'Enthalpy: ', maxval(abs((h_col_new(is:ie,js:je) - h_col(is:ie,js:je))/h_col(is:ie,js:je)))
+!            write(*,*) 'H2O mass: ', maxval(abs((m_col_new(is:ie,js:je)-m_col(is:ie,js:je))/m_col(is:ie,js:je)))
+!            write(*,*) '======================================================================================='
+!            write(*,*) 'Summary of output'
+!            write(*,*) 't_dt_conv_ding, t_dt_lsc, t_dt_rainout'
+!            write(*,*) maxval(t_dt_conv_ding(is:ie,js:je,:)), maxval(t_dt_lsc(is:ie,js:je,:)), minval(t_dt_rainout(is:ie,js:je,:))
+!            write(*,*) 'q_dt_conv_ding, q_dt_lsc, q_dt_rainout'
+!            write(*,*) maxval(q_dt_ding_vap(is:ie,js:je,:)), maxval(q_dt_lsc(is:ie,js:je,:)), maxval(q_dt_rainout(is:ie,js:je,:))
+!            write(*,*) 'maxval sum q_dt'
+!            do k=1,npz
+!               write(*,*) k,q_dt_ding_vap(is,js,k), q_dt_lsc(is,js,k), q_dt_rainout(is,js,k)
+!            enddo
+!         endif
+!         !! =========================================================================================
 
-         !! =========================================================================================
-
-!$OMP parallel do default(none) shared(is,ie,js,je,npz,nq, q_dt_ding, dt_atmos, t_dt_conv_ding, &
-!$OMP                                  t_dt_lsc, t_dt_rainout)
+!$OMP parallel do default(none) shared(is,ie,js,je,npz, q_dt_ding_vap, dt_atmos, t_dt_conv_ding, &
+!$OMP                                  t_dt_lsc, t_dt_rainout, q_dt_rainout, q_dt_lsc,vap, q_dt_ding)
          do k=1,npz
             do j=js,je
                do i=is,ie
-                  do l=1,nq
-                     q_dt_ding(i,j,k,l)= q_dt_ding(i,j,k,l)/dt_atmos
-                  enddo
+                  q_dt_ding(i,j,k)= (q_dt_ding_vap(i,j,k) + q_dt_lsc(i,j,k) + q_dt_rainout(i,j,k))/dt_atmos
                   t_dt_conv_ding(i,j,k) = t_dt_conv_ding(i,j,k)/dt_atmos
                   t_dt_lsc(i,j,k) = t_dt_lsc(i,j,k)/dt_atmos
                   t_dt_rainout(i,j,k) = t_dt_rainout(i,j,k)/dt_atmos
                enddo
             enddo
          enddo
-   end if
-
+      end if
+      
 !         q_dt_ding(is:ie,js:je,1:npz,1:nq)= q_dt_ding(is:ie,js:je,1:npz,1:nq)/dt_atmos
 !
 !         t_dt_conv_ding(is:ie,js:je,1:npz) = t_dt_conv_ding(is:ie,js:je,1:npz)/dt_atmos
@@ -869,7 +918,7 @@ ts_dt(is:ie,js:je) = 0.0
 
 !$OMP parallel do default(none) shared(is,ie,js,je,npz,nq,t_dt,t_dt_rad,t_dt_conv,&
 !$OMP                                  t_dt_conv_moist, t_dt_diff,t_dt_conv_ding,t_dt_lsc,t_dt_rainout,&
-!$OMP                                  u_dt,u_dt_diff,v_dt, v_dt_diff, q_dt, q_dt_ding)
+!$OMP                                  u_dt,u_dt_diff,v_dt, v_dt_diff, q_dt, vap, q_dt_ding)
    do k=1,npz
       do j=js,je
          do i=is,ie
@@ -885,9 +934,7 @@ ts_dt(is:ie,js:je) = 0.0
             u_dt(i,j,k) = u_dt(i,j,k) + u_dt_diff(i,j,k)
             v_dt(i,j,k) = v_dt(i,j,k) + v_dt_diff(i,j,k)
 
-            do l=1,nq
-               q_dt(i,j,k,l) = q_dt(i,j,k,l) + q_dt_ding(i,j,k,l)
-            enddo
+            q_dt(i,j,k,vap) = q_dt(i,j,k,vap) + q_dt_ding(i,j,k)
          enddo
       enddo
    enddo
