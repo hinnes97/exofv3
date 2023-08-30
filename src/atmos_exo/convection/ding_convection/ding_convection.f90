@@ -67,15 +67,11 @@ contains
     !==========================================================================
     real :: T_tmp(size(p)), qv_tmp(size(p)), qc_tmp(size(p)), qi_tmp(size(p))
     
-    real :: dlnTdlnp, temp, T_lift,rho_lift,q_lift, pfact, cp_v_loc,cp_c_loc
-    real :: qsats(size(p)), rhos(size(p)), rc(size(p)), rv(size(p)), qt(size(p)), xs(size(p)), psats(size(p)), q_cond(size(p)), hvert(size(p)),&
-           hvert0(size(p)), T_virt(size(p)), T_virt_lift, R_lift
-    real :: R_local(size(p)), cp_local(size(p)), h_cond, mq_old, mq_new, h_before,h_temp, m_bef,m_aft,h_aft, qtest, qtest2, grad, psattmp, qsatlift, T1, T2, q1, q2, qsat1, qsat2, R_loaded(size(p))
-    real :: temp1, temp2, temp3, temp4
-    
-    integer :: k, npz ,n, m, kmin, kmax
-    logical :: conv_Triggered = .false.
-    logical :: wet_mask(size(p)), dry_mask(size(p))
+    real :: dlnTdlnp, temp, T_lift,rho_lift,q_lift, pfact
+    real :: qsats(size(p)), rhos(size(p)),  qt(size(p)),  q_cond(size(p)),&
+            T_virt(size(p)), T_virt_lift, R_lift
+    real :: R_local(size(p)), cp_local(size(p)), qsatlift, R_loaded(size(p))
+    integer :: k, npz, m,n
 
     !write(*,*) 'BEGINNING OF DING ADJUST'
     !write(*,*) maxval(q(:,iv)), maxval(q(:,ic)), iv, ic
@@ -84,27 +80,21 @@ contains
     ! Main body
     !==========================================================================
 
-    wet_mask = .false.
-    dry_mask = .false.
-     h_cond = 0.0
+
     npz = size(p)
-    kmin = npz
-    kmax = 1
-!    write(*,*) 'TEEST'
-!    write(*,*) maxval(q(1:npz,iv)), maxval(q(1:npz,ic)), iv, ic
     
     qt = q(:,iv) !+q(:,ic)
     
     ! ENTHALPY TEST
-    h_before=0.0
-    m_bef=0.0
-    
-    do k=1,npz
-       call calc_enthalpy(T(k), q(k,iv), 0.0, 0.0, h_temp)
-       hvert0(k) = h_temp
-       h_before = h_before + h_temp*delp(k)
-       m_bef = m_bef + q(k,iv)*delp(k)
-    enddo
+!    h_before=0.0
+!    m_bef=0.0
+!    
+!    do k=1,npz
+!       call calc_enthalpy(T(k), q(k,iv), 0.0, 0.0, h_temp)
+!       hvert0(k) = h_temp
+!       h_before = h_before + h_temp*delp(k)
+!       m_bef = m_bef + q(k,iv)*delp(k)
+!    enddo
 
     ! Only do adjustment on copy of profiles
     T_tmp = T
@@ -114,21 +104,14 @@ contains
     q_cond = q_liq + q_ice
     
     do n=1,N_iter_conv
-       dry_mask = .false.
-       wet_mask = .true.
        ! Find saturation vapour specific humidity
        call q_sat(p,T_tmp,q_cond,qsats)
 
        cp_local = cp_d*(1-qv_tmp-qc_tmp-qi_tmp) + cp_v*qv_tmp + cp_liquid*qc_tmp + cp_v*qi_tmp
-
-       
        R_local = Rstar*(qv_tmp/mu_v/(1-qc_tmp-qi_tmp) + (1-qv_tmp - qc_tmp - qi_tmp)/(1-qc_tmp-qi_tmp)/mu_d)
        R_loaded = R_local*(1 - qc_tmp - qi_tmp)
-       !cp_local = cp_d*(1-q) * cp_v * q
        rhos = p/R_local/T
        T_virt = R_local*T_tmp/rdgas
-
-!       if (gid==0) write(*,*) 'MAX PT, PRE CONVECTION', maxval(T)
 
        ! Upwards sweep
        do k=npz-1,1,-1
@@ -145,7 +128,6 @@ contains
                 write(*,*) 'QSATS<0', qsats(k+1)
              endif
              
-          !if (xs(k+1)*p(k+1) .gt. 0.9*psats(k+1)) then
              ! get moist gradient
              call gradient(p(k+1), T_tmp(k+1), dlnTdlnp,temp)
 
@@ -156,63 +138,15 @@ contains
              ! Calculate q here as proportion of gas phase rv/(1+rv)
              call r_sat_single(p(k), T_lift, q_lift)
              q_lift = q_lift/(1 + q_lift)
-
              R_lift = Rstar*(q_lift/mu_v + (1. - q_lift)/mu_d)
-             !rho_lift = p(k)/T_lift/( Rstar*(q_lift/mu_v + (1-q_lift)/mu_d ))
 
              T_virt_lift = T_lift * R_lift/rdgas
              if (T_virt_lift .gt. T_virt(k) .and. k .gt. 10) then
-!                if (is_master().and. qv_tmp(k+1) .gt. rvgas*T_tmp(k+1)/L_vap/(1.-mu_d/mu_v) .and. &
-!                  omp_get_thread_num() .eq. 0) then
-!                   write(*,*) 'Moist convection triggered, k=', k
-!                   write(*,*) 'p(k), p(k+1), T(k), T(k+1)'
-!                   write(*,*) p(k), p(k+1), T_tmp(k), T_tmp(k+1)
-!                   write(*,*) 'qv_tmp(k+1), q_crit = RvT/Lw'
-!                   write(*,*) qv_tmp(k+1), rvgas*T_tmp(k+1)/((hv_tp - hl_tp + (cp_v-cp_liquid)*(T_tmp(k+1)-T_tp)))/(1. - mu_d/mu_v)
-!                   write(*,*) 'qv_tmp(k), q_crit = RvT/Lw'
-!                   write(*,*) qv_tmp(k), rvgas*T_tmp(k)/((hv_tp - hl_tp + (cp_v-cp_liquid)*(T_tmp(k)-T_tp)))/(1. - mu_d/mu_v)
-!                   !write(*,*) 'rho(k), rho_lift'
-!                   !write(*,*) rhos(k), rho_lift
-!                   write(*,*) 'qv_tmp(k+1), qsats(k+1), RH'
-!                   writE(*,*) qv_tmp(k+1), qsats(k+1), qv_tmp(k+1)/qsats(k+1)
-!                   write(*,*) 'qv_tmp(k), qsats(k),RH '
-!                   write(*,*) qv_tmp(k), qsats(k), qv_tmp(k)/qsats(k)
-!                   write(*,*) 'T_lift, T(k)'
-!                   write(*,*) T_lift, T_tmp(k)
-!                   write(*,*) 'ql, qi'
-!                   write(*,*) qc_tmp(k+1), qi_tmp(k+1)
-!                   call sat_vp(T_tmp(k+1), psattmp)
-!                   write(*,*) 'psat(k+1)', psattmp
-!                   write(*,*) 'q_satcalc(k+1)', ((mu_v/mu_d)*psattmp/p(k+1))/(1 + (mu_v/mu_d - 1.)*psattmp/p(k+1)) * (1. - qi_tmp(k+1) - qc_tmp(k+1))
-!                   call sat_vp(T_tmp(k), psattmp)
-!                   write(*,*) 'psat(k)', psattmp
-!                   write(*,*) 'q_satcalc(k)', ((mu_v/mu_d)*psattmp/p(k))/(1 + (mu_v/mu_d - 1.)*psattmp/p(k)) * (1. - qi_tmp(k) - qc_tmp(k))
-!                endif
-!                conv_triggered=.true.
-!             if (T_lift .gt. T(k)) then ! Conventional
-                ! Convection here! Conserve non-dilute moist enthalpy
-                !write(*,*) 'T1', T_tmp(k), 'T2', T_tmp(k+1), 'qv1',qv_tmp(k), 'qv2', qv_tmp(k+1), 'qc1',qi_tmp(k), 'qc2',qi_tmp(k+1)
-                !write(*,*) 'BEFORE CONSERVE MOIST ENTH'
-!!$                write(*,*) 'BEFORE',  (qv_tmp(k) + qc_tmp(k) + qi_tmp(k))*delp(k)&
-!!$                     + (qv_tmp(k+1) + qc_tmp(k+1) + qi_tmp(k+1))*delp(k+1)
-!!$                write(*,*) qv_tmp(k), qc_tmp(k), qi_tmp(k), delp(k)
-!!$                write(*,*) qv_tmp(k+1), qc_tmp(k+1), qi_tmp(k+1), delp(k+1)
+
+                ! Routine does pairwise moist adjustment
                 call conserve_moist_enthalpy(p(k), p(k+1), T_tmp(k), T_tmp(k+1), qv_tmp(k), qv_tmp(k+1), &
                      delp(k), delp(k+1), qc_tmp(k), qc_tmp(k+1), qi_tmp(k), qi_tmp(k+1))
-
-!                call q_sat_single(p(k), T_tmp(k), qc_tmp(k) + qi_tmp(k), qtest)
-!                write(*,*) 'AFTER, qv, qsat, cond', qv_tmp(k), qtest, qi_tmp(k) + qc_tmp(k)
-!                call q_sat_single(p(k+1), T_tmp(k+1), qc_tmp(k+1) + qi_tmp(k+1), qtest2)
-                !                write(*,*) 'AFTER, qv, qsat, cond', qv_tmp(k+1), qtest, qi_tmp(k+1) + qc_tmp(k+1)
-
-
-!!$             
-!!$                write(*,*) 'AFTER',  (qv_tmp(k) + qc_tmp(k) + qi_tmp(k))*delp(k)&
-!!$                     + (qv_tmp(k+1) + qc_tmp(k+1) + qi_tmp(k+1))*delp(k+1)
-
-                !write(*,*) 'after moist enth', qi_tmp(k), qi_tmp(k+1)
-                !write(*,*) 'T1_post', T_tmp(k), 'T2_post', T_tmp(k+1), 'qv1_post',qv_tmp(k), 'qv2_post', qv_tmp(k+1), 'qc1_post',qi_tmp(k), 'qc2_post',qi_tmp(k+1)
-
+                
 ! Recalculate the new rho, qsat etc
                 do m=k,k+1
                    R_local(m) = Rstar*(qv_tmp(m)/mu_v/(1 - qc_tmp(m) - qi_tmp(m)) + &
@@ -224,9 +158,6 @@ contains
                         cp_liquid*qc_tmp(m) + cp_v*qi_tmp(m)
                    q_cond(m) = qi_tmp(m) + qc_tmp(m)
                    call q_sat_single(p(m), T_Tmp(m), q_cond(m), qsats(m))
-                   wet_mask(m) = .true.
-!                   call q_sat_single(p(m), T_tmp(m), qi_tmp(m) + qc_tmp(m), psattmp)
-!                   write(*,*) 'RH = ', qv_tmp(m)/psattmp
                 enddo
              endif
              
@@ -241,57 +172,9 @@ contains
              rho_lift = p(k)/T_lift/R_local(k+1)
              
              if (T_virt_lift .gt. T_virt(k)) then
-!                if (is_master() .and. omp_get_thread_num() .eq. 0) then
-!                   write(*,*) 'Dry con triggered, k=', k
-!                   write(*,*) T_tmp(k), T_lift
-!                   write(*,*) T_virt(k), T_virt_lift
-!                   write(*,*) 'qv_tmp(k+1), qsats(k+1)'
-!                   write(*,*) qv_tmp(k+1), qsats(k+1)
-!                   write(*,*) 'rho(k), rho_lift'
-!                   write(*,*) rhos(k), rho_lift
-!                endif
-
-!                if (is_master()) then
-!                   write(*,*) 'before dry'
-!                   write(*,*) k, T_tmp(k), T_Tmp(k+1)
-!                endif
                 call conserve_dry_enthalpy(p(k), p(k+1), T_tmp(k), T_tmp(k+1), qv_tmp(k), qv_tmp(k+1), &
                      delp(k), delp(k+1), qc_tmp(k), qc_tmp(k+1), qi_tmp(k), qi_tmp(k+1))
 !
-!                if (saturated) then
-!                   
-!                   call gradient(p(k+1), T_tmp(k+1), dlnTdlnp,temp)
-!
-!                  ! Calculate lifted temperature from adiabatic expansion
-!                   pfact = exp(dlnTdlnp*log(p(k)/p(k+1)))
-!                   T_lift = T_tmp(k+1)*pfact
-!             
-!                  ! Calculate q here as proportion of gas phase rv/(1+rv)
-!                   call r_sat_single(p(k), T_lift, q_lift)
-!                   q_lift = q_lift/(1 + q_lift)
-!
-!                   R_lift = Rstar*(q_lift/mu_v + (1. - q_lift)/mu_d)
-!             
-!                   T_virt_lift = T_lift * R_lift/rdgas
-!                   if (T_virt_lift .gt. T_virt(k) .and. k .gt. 10) then
-!                      write(*,*) 'INSIDE CORRECTED MOIST CONVECTION'
-!                      write(*,*) 'T_tmp(k), T_tmp(k+1)', T_tmp(k), T_tmp(k+1)
-!                      write(*,*) 'T1, T2', T1, T2
-!                      write(*,*) 'q1, qsat1', q1, qsat1, q1/qsat1
-!                      write(*,*) 'q2, qsat2', q2, qsat2,q2/qsat2
-!                      write(*,*) 'qv_tmp(k), qsats(k)', qv_tmp(k), qsats(k), qv_tmp(k)/qsats(k)
-!                      write(*,*) 'qv_tmp(k+1), qsats(k+1)', qv_tmp(k+1), qsats(k+1), qv_tmp(k)/qsats(k+1)
-!                      call conserve_moist_enthalpy(p(k), p(k+1), T_tmp(k), T_tmp(k+1), qv_tmp(k), qv_tmp(k+1), &
-!                     delp(k), delp(k+1), qc_tmp(k), qc_tmp(k+1), qi_tmp(k), qi_tmp(k+1))
-!                   endif
-!                endif
-
-
-!                if (is_master()) then
-!                   write(*,*) 'after'
-!                   write(*,*) k, T_tmp(k), T_Tmp(k+1)
-!                endif
-
 ! Recalculate rhos
                 do m=k,k+1
                    R_loaded(m) = Rstar*(qv_tmp(m)/mu_v + &
@@ -303,14 +186,12 @@ contains
                         cp_liquid*qc_tmp(m) + cp_v*qi_tmp(m)
                    q_cond(m) = qi_tmp(m) + qc_tmp(m)
                    call q_sat_single(p(m), T_Tmp(m), q_cond(m), qsats(m))
-                   dry_mask(m) = .true.
                 enddo
              endif
           endif ! if (q(k+1) .gt. qsats(k+1))
 
        enddo ! do k=npz-1,1,-1
-!if (gid==0) write(*,*) 'MAX PT, POST CONVECTION', maxval(T)
-!stop
+
 
     enddo ! do n=1,N_iter
 
@@ -318,47 +199,26 @@ contains
     q_dt_ding(:) = qv_tmp - q(:,iv)
     q_ice = qi_tmp
     q_liq = qc_tmp
-!q_dt_ding(:,ic) = qc_tmp !- q(:,ic)
 
     call q_sat(p, T_tmp, qc_tmp + qi_tmp, qsats)
     do k=1,npz
-!       if ( qv_tmp(k)/qsats(k) .gt. 1.0001 .and. (wet_mask(k))) then
-!          write(*,*) 'oversaturation created, k=', k
-!          write(*,*) qv_tmp(k), qsats(k)
-!          write(*,*) wet_mask(k), dry_mask(k)
-!          write(*,*) t_dt_ding(k-1), t_dt_ding(k), t_dt_ding(k+1)
-!          write(*,*) T_tmp(k), T_tmp(k+1), T(k), T(k+1)
-!          write(*,*) T_virt(k), T_virt(k+1)
-!       endif
        if (qv_tmp(k) .lt. 0) then
           write(*,*) 'VAPOUR LESS THAN 0!!', k, q(k,iv), qv_tmp(k)
           stop
        endif
     enddo
     
-    ! ENTHALPY TEST
-    h_aft=0.0
-    m_aft = 0.0
-    do k=1,npz
-       call calc_enthalpy(T_tmp(k), qv_tmp(k), q_liq(k), q_ice(k), h_temp)
-       h_aft = h_aft + h_temp*delp(k)
-       m_aft = m_aft + (qv_tmp(k)+q_ice(k) + q_liq(k))*delp(k)
-    enddo
-    if (conv_triggered) write(*,*) 'conservation',  abs((h_aft - h_before)/h_before), abs((m_bef - m_aft)/m_bef)!!'ICE', maxval(qi_tmp), maxval(q_ice)
-!    write(*,*) 'ENTHALPY BEFORE/AFTER', maxval(abs(t_dt_ding))
-
-
-! HII test
-!    if (any(mask)) write(*,*) 'POST CONVECTION TEST'
-!    do k=1,npz-1
-!       if (mask(k) .and. mask(k+1)) then
-! Moist convection here
-!          grad = (log(T_Tmp(k+1)) - log(T_tmp(k)))/(log(p(k+1)) - log(p(k)))
-!          call gradient(p(k+1), T_tmp(k+1), dlnTdlnp,temp)
-!
-!          write(*,*)'k= ', k, grad, dlnTdlnp, abs(grad - dlnTdlnp)/dlnTdlnp
-!       endif
+!    ! ENTHALPY TEST
+!    h_aft=0.0
+!    m_aft = 0.0
+!    do k=1,npz
+!       call calc_enthalpy(T_tmp(k), qv_tmp(k), q_liq(k), q_ice(k), h_temp)
+!       h_aft = h_aft + h_temp*delp(k)
+!       m_aft = m_aft + (qv_tmp(k)+q_ice(k) + q_liq(k))*delp(k)
 !    enddo
+!    if (conv_triggered) write(*,*) 'conservation',  abs((h_aft - h_before)/h_before), abs((m_bef - m_aft)/m_bef)!!'ICE', maxval(qi_tmp), maxval(q_ice)
+
+
   end subroutine ding_adjust
 
   subroutine conserve_dry_enthalpy(p1, p2, T1, T2, q1, q2, dp1, dp2, qc1, qc2, qi1, qi2)
@@ -379,10 +239,10 @@ contains
     !==========================================================================
     ! Local variables
     !==========================================================================    
-    real :: k_old, L1, L2, T2_guess, T1_new, dlnTdlnp, pfact,k_new, k1, k2
+    real :: k_old, T2_guess, T1_new,k_new, k1, k2
 
-    real :: q1_new, q2_new, R_new, cpv_1, cpv_2, dT,k_diff, qc1_new, qc2_new, qi1_new, qi2_new
-    real :: temp1,temp2,temp3,temp4,temp5, temp
+    real :: q1_new, q2_new,k_diff, qc1_new, qc2_new, qi1_new, qi2_new
+    real :: temp1,temp2,temp4, temp
     integer ::  n, m
     
     !==========================================================================
@@ -406,8 +266,6 @@ contains
     qi1_new = (qi1*dp1 + qi2*dp2)/(dp1 + dp2)
     qi2_new = qi1_new
     
-    !pfact = exp(Rstar*(q1_new/(1-qc1_new-qi1_new)/mu_v + (1-q1)/(1-qc1_new)/mu_d)/cp_v*log(p1/p2))
-    !T2_guess = (dp1*T1 + dp2*T2)/(dp2 + dp1*pfact)
 
     T2_guess = T2
     n = 0
@@ -437,21 +295,6 @@ contains
        write(*,*) temp4, T2_guess
 
        do m=1,20
-!!$          call calc_enthalpy(T2_guess-1.0+m*0.2, q2_new, qc2_new, temp1)
-!!$          temp2 = Rstar*(q1_new/(1-qc1_new)/mu_v + (1-q1_new-qc1_new)/(1-qc1_new)/mu_d)
-!!$
-!!$          if (T2_guess-1.0+0.2*m .lt. T_tp) then
-!!$             temp3 = cp_v*q1_new + qc1_new*cp_v + (1-qc1_new-q1_new)*cp_d
-!!$          else
-!!$             temp3 = cp_v*q1_new + qc1_new*cp_liquid + (1-qc1_new-q1_new)*cp_d
-!!$          endif
-!!$
-!!$          pfact = exp(temp2/temp3 * log(p1/p2))
-!!$          temp4 = (T2_guess-1.0+m*0.2)*pfact
-!!$          
-!!$          call calc_enthalpy(temp4, q2_new,qc2_new, temp3)
-!!$          temp4 = dp1*temp3 + dp2*temp1 - k_old
-!!$          write(*,*) 'm=', m, temp4, k_new-k_old, T2_guess - 1.+m*0.2
           call k_adj_dry(T2_guess+temp, p1,p2,dp1,dp2,q1_new,qc1_new,qi1_new,temp1, temp2, .true.)
           write(*,*) 'm=', m, temp1 - k_old, k_new-k_old, T2_guess-1.+m*0.2
        enddo
@@ -490,19 +333,6 @@ contains
     cpv_2 = cp_v
     cpc_2 = cp_liquid
     cpi_2 = cp_v
-    
-!!$    if (T2_guess .lt. T_tp - T_low) then
-!!$       cpv_2 = cp_v
-!!$       cpc_2 = cp_v
-!!$    else if (T2_guess .lt. T_tp .and. T2_guess .gt. T_tp - T_low ) then
-!!$       cpv_2 = cp_v
-!!$       cpc_2 = cp_v + (cp_liquid - cp_v)*(T2_guess - T_tp + T_low)/T_low
-!!$    else
-!!$       cpv_2 = cp_v
-!!$       cpc_2 = cp_liquid
-!!$    endif
-
-    !cp_new = q1*cpv_2 + qc1*cpc_2 + (1 - q1 - qc1)*cp_d
 
     cp_new = q1*cpv_2 + qc1*cpc_2*(1-f_ice) + qi1*cpi_2*f_ice + (1 - q1 - qc1 - qi1)*cp_d
     if (present(printme)) write(*,*) 'k_adj_dry, cp_new', cp_new
@@ -523,7 +353,7 @@ contains
     real, intent(in) :: T2_guess, p1, p2, dp1, dp2,q1,qc1, qi1
     real, intent(out) :: dk_adj
 
-    real :: t, t2,  kp, km
+    real :: t, kp, km
     real :: eps = 1.e-8
 
     call k_adj_dry(T2_guess+eps/2, p1, p2, dp1, dp2, q1, qc1, qi1, t, kp)
@@ -552,10 +382,10 @@ contains
     !==========================================================================
     ! Local variables
     !==========================================================================    
-    real :: k_old, L1, L2, T2_guess, T1_guess, dlnTdlnp, pfact, q1_new, q2_new, k_new
+    real :: k_old, T2_guess,  q1_new, q2_new, k_new
 
-    real :: eta, r1_new, r2_new, rc_2, rc_1, m_i, f1, k_diff, dT, T1_new, rv_1, rv_2
-    real :: k1_old, k2_old,mq_old, mq_new, qt_10, qt_20,k_test,T1g2,h1,h2, h3,h4
+    real :: k_diff, dT, T1_new
+    real :: k1_old, k2_old,mq_old, mq_new, qt_10, qt_20
     real :: qc_1_new, qc_2_new, qi_1_new, qi_2_new
     integer :: n
 
@@ -607,12 +437,6 @@ contains
        write(*,*) 'MAX newton, MOIST', T1, T2
        return
     endif
-    !write(*,*) 'AFTER NEWT', T1_new, T2_guess
-!!$    if ((abs(T1_new-T1) .gt. max_dt) .or. (abs(T2_guess - T2) .gt. max_dt)) then
-!!$       write(*,*) 'BIG DT', abs(T1_new-T1), abs(T2_guess-T2), T1, T2, T1_new, T2_guess
-!!$       write(*,*) 'tets'
-!!$       return
-!!$    endif
 
     if (q1_new .lt. 0. .or. q2_new .lt. 0) then
        write(*,*) 'LESS THAN 0', q1_new, q2_new, q1, q2
@@ -630,9 +454,6 @@ contains
     
     mq_new = (q1 +qc_1 + qi_1)*dp1 + (q2 +qc_2+qi_2)*dp2
 
-    !write(*,*) 'CONSMOISTENTH', abs((k_new-k_old)/k_new)
-!    write(*,*) 'CONSMOISTENTH', abs((mq_new - mq_old)/mq_old), mq_old, mq_new!qc_1_new, qc_2_new, qi_1_new, qi_2_new
-    
   end subroutine conserve_moist_enthalpy
 
   subroutine k_adj(T2_guess, p1, p2, dp1, dp2, q1_0,q2_0,qv_1,qv_2,&
@@ -642,7 +463,7 @@ contains
 
 
     real :: dlnTdlnp, rc_1, rc_2, rv_1, rv_2
-    real :: k1, k2, eta, f1, m_i, pfact, f_ice, q_test
+    real :: k1, k2, eta, f1, pfact, f_ice, m_i
     
     call gradient(p2, T2_guess, dlnTdlnp)
     
@@ -695,10 +516,6 @@ contains
        qc_2 = rc_2/(1+rv_2 + rc_2)*(1 - f_ice)
        qi_2 = rc_2/(1+rv_2 + rc_2)*f_ice
 
-!       call q_sat_single(p1, T1_new, qc_1 + qi_1, q_test)
-!       write(*,*) 'QV1 vs SATURATION', qv_1,q_test
-!       call q_sat_single(p2, T2_guess, qc_2 + qi_2, q_test)
-!       write(*,*) 'QV2 vs SATURATION', qv_2,q_test
     endif
 
     ! Find enthalpy of the new structure
@@ -722,8 +539,8 @@ contains
     integer:: k, n
     integer :: npz
 
-    real :: qsat, psat, cp_local, dT , qt, q_guess, T_guess, f_ice_guess
-    real :: kold, knew, rv, Tgp, qgp, Tgm,qgm, kp, km, diff, qc_guess, qi_guess, x, x_sat
+    real :: qsat,dT , qt, q_guess, T_guess, f_ice_guess
+    real :: kold, knew, Tgp, qgp, Tgm,qgm, kp, km, diff, qc_guess, qi_guess
     real :: q_cond
     real :: T_tmp(size(p)), qv_tmp(size(p)), qc_tmp(size(p)), qi_tmp(size(p))
 
@@ -738,7 +555,6 @@ contains
 
     do k=1,npz
 
-       !call get_xh2o(qv_tmp(k), qi_tmp(k) + qc_tmp(k), x)
        qt = qc_tmp(k) + qv_tmp(k) + qi_tmp(k)
        mbef = qt
        q_cond = qc_tmp(k) + qi_tmp(k)
@@ -797,27 +613,6 @@ contains
              n = n+1
           enddo
 
-       
-!!$       if (rv(k) .gt. rsat) then
-!!$          ! Find adjustment that will bring atmosphere to saturation
-!!$          cp_local = cp_l*(rv(k)+rc(k))/(1 + rv(k) + rc(k)) + cp_d/(1 + rv(k) + rc(k))
-!!$
-!!$          dT = 0.0
-!!$          n_newt = 100
-!!$          T_guess = T(k)
-!!$          q0 = rv(k) / (1 + rv(k) + rc(k))
-!!$          do while ( (abs(dT) .gt. precision) .and. (n .lt. n_iter))
-!!$             call r_sat_single(p(k), T_guess, rsat, psat)
-!!$             
-!!$             qsat_guess = rsat/(1 + rv(k) + rc(k)) ! Note rv+rc = const throughout to conserve mass
-!!$
-!!$             dqsat_dt = rsat*L*mu_v/Rstar/T_guess**2 * p(k)/(p(k)-psat)
-!!$             dT = (L/cp_local * (q0 - qsat_guess) + (T_guess - T(k))) &
-!!$                  / (1 + L/cp_local *dqsat_dt)
-!!$
-!!$             T_guess = T_guess + dT
-!!$          enddo
-!!$
           ! Update T(k) with the value from large scale condensation
           if (abs(dT) .lt. precision) then
              T_tmp(k) = T_guess
@@ -878,20 +673,6 @@ contains
     h_i = h_v - L_sub
     h_c = hl_tp + cp_liquid*(T-T_tp)
 
-!!$    if (T .lt. T_tp -20._dp) then
-!!$       ! Assuming specific heat of ice = specific heat of vapour, and therefore
-!!$       ! constant latent heat of sublimation (h_v - h_c)
-!!$       h_v = h_v + cp_v*(T - T_tp)
-!!$       h_c = h_v - L_sub
-!!$    else if (T .lt. T_tp .and. T .gt. T_tp-20._dp)
-!!$       ! Assuming constant cp -- note this means latent heat of vaporization
-!!$       p! = h_v - h_c will be linearly decreasing with temperature (in reality steeper)
-!!$       
-!!$    else
-!!$       h_v = hv_tp + cp_v*(T - T_tp)
-!!$       h_c = hl_tp + cp_liquid*(T - T_tp)
-!!$    endif
-
     ! Per unit mass, multiply by dp out of routine!
     kout = h_d*(1 - q_v - q_c - q_i) + h_c*q_c + h_v*q_v + h_i*q_i
   end subroutine calc_enthalpy
@@ -935,98 +716,14 @@ contains
    kout = h_d + h_v + h_i + h_l
   end subroutine calc_enthalpy_mass
   
-  subroutine rain_out(delp, T, q, qc, h_cond)
-    !==========================================================================
-    ! Description
-    !==========================================================================
-    ! Does rain out and conserves mass + enthalpy in doing so
-
-    !==========================================================================
-    ! Input variables
-    !==========================================================================    
-    real, intent(in),dimension(:) :: T
-
-    !==========================================================================
-    ! Output variables
-    !==========================================================================    
-    real, intent(out) :: h_cond
-
-    !==========================================================================
-    ! Input/Output variables
-    !==========================================================================    
-    real, intent(inout) :: delp(:), q(:) ,qc(:)
-    
-    !==========================================================================
-    ! Local variables
-    !==========================================================================    
-    integer :: k
-    integer :: npz 
-
-    real :: m_cond_tot, m_cond, rsat, T_guess, q0, rv
-    real :: required, temp
-    
-    h_cond = 0.0
-    m_cond_tot = 0.0
-    npz = size(T)
-    do k=1,npz
-       
-       ! Mass loss
-       m_cond     = qc(k) * delp(k)/grav
-       m_cond_tot = m_cond_tot + m_cond
-
-       !=================================================================================
-       ! Development notes
-       !=================================================================================
-       ! Re-evaporated condensate
-       ! To do this in an enthalpy-conserving way, one would have to heat the condensate
-       ! from source level to destination level, and then evaporate it into the source layer.
-       ! This gives two equations in two variables -- mass of fallen condensate
-       ! and the final temperature of layer below. Can be solved with a 2D newton iteration
-       ! Easiest to do by going down layer by layer and testing for undersaturation, then
-       ! selecting available condensate from layers above to transport to that layer and
-       ! re-evaporate. What layer to select from though? Nearest layer, highest layer, layer
-       ! with the highest mass of condensate? Probably best to do nearest layer since higher
-       ! pressure thickness in log space will make it more likely to have enough available
-       ! condensate. 
-       !================================================================================
-
-!!$       if (T(k) .lt. T_tp) then
-!!$          h_cond = h_cond + m_cond * (cp_v)*(T(k)-T_tp - L_sub)
-!!$       else
-!!$          call find_var_simplified(T(k), 'hl', temp)
-!!$          h_cond = h_cond + m_cond * temp
-!!$       endif
-       
-       ! New q once condensate has rained out
-       q(k) = q(k)/(1 - qc(k))
-
-       delp(k) = delp(k) - m_cond*grav
-       qc(k) = 0.0
-    end do
-
-  end subroutine rain_out
-
-  subroutine rain_out_simple(q_dt)
-    real, intent(inout) :: q_dt(:,:)
-    
-    q_dt(:,ic) = 0.0
-    
-  end subroutine rain_out_simple
-
-  subroutine rain_out_revap(T, p, delp, qv, ql, qi, q_dt_rainout, dT, i_loc, j_loc, is,js)
+  subroutine rain_out_revap(T, p, delp, qv, ql, qi, q_dt_rainout, dT)
     real, intent(in) :: T(:), p(:), delp(:), qv(:)
     real, intent(inout) :: q_dt_rainout(:), ql(:), qi(:)
     real, intent(out) :: dT(:)
-    !real, intent(out) :: t_tmp(:), qv_tmp(:)
-    integer, intent(in) :: i_loc, j_loc, is, js
     real, dimension(size(p)) :: ql_tmp, qi_tmp, T_tmp, qv_tmp
     real :: small, T_cond, satq, delT, T_guess, Tgp, Tgm
-    real :: h0, hcond, hgas, hnew, hp, hm, diff, md, mv, mv_new, m_cond, m_evap
-    real :: hsmall,  hbef,haft, htmp, h_k0, h_l0, h_k, h_l, h_dry, h_c, h_also, mbef_i, mbef_l, mbef_v
-    real :: m_i, m_f
-    real :: maft_v
-    real:: fi, f, fp, fm
-
+    real :: h0, hcond, hgas, hnew, hp, hm, diff, md, mv, mv_new, m_cond
+    real:: fi
     
     real, dimension(size(p)) :: m_ds, m_vs, m_ls, m_is, delqi, delql, delqv
     
@@ -1034,12 +731,6 @@ contains
     
     logical :: l_evap
     ! Add on tendencies from previous parts of the condensation scheme
-
-!    T_tmp = T 
-!    ql_tmp = ql
-!    qi_tmp = qi
-!    qv_tmp = qv 
-
 
     npz = size(T)
     dT = 0.0
@@ -1094,24 +785,6 @@ contains
        if ( ql_tmp(k) .gt. small .or. qi_tmp(k) .gt. small) then
           ! Condensate! Attempt re-evaporation
 
-          if (is_master() .and. omp_get_thread_num() .eq. 1) then
-             
-!             write(*,*) 'k = ', k
-!             write(*,*) 'cond amount', ql_tmp(k), qi_tmp(k)
-
-!
-!             if (k .eq. npz) then
-!                writE(*,*) '-----------------------------------------'
-!                write(*,*) 'k = npz'
-!                write(*,*) 'temp = ', T_tmp(k)
-!                call q_sat_single(p(k), T_tmp(k), ql_tmp(k) + qi_tmp(k), satq)
-!                
-!                write(*,*) ' qsat = ', satq
-!                write(*,*) ' qv(k) =  ',qv_tmp(k), qv_tmp(k)/satq
-!                write(*,*) '------------------------------------------'
-!             endif
-             
-          endif
           T_cond = T_tmp(k)
           m_cond = (ql_tmp(k) + qi_tmp(k))*delp(k)
           m_cond = m_ls(k) + m_is(k)
@@ -1125,22 +798,16 @@ contains
              call q_sat_single(p(l), T_Tmp(l), ql_tmp(l) + qi_tmp(l), satq)
 
              if (qv_tmp(l) .lt. satq*0.9 .and. qi_tmp(l) .lt. small .and. ql_tmp(l) .lt. small) then
-                !write(*,*) 'qi_tmp, ql_tmp'
-                !write(*,*) qi_tmp(l), ql_tmp(l), m_is(l), m_ls(l)
                 ! Re-evaporate!
                 ! First attempt to re-evaporate all the condensate in this layer
 
-!                if (is_master() .and. omp_get_thread_num() .eq. 1) write(*,*) 'revap into layer ', l
                 ! Condensate falling out of layer
                 l_evap = .true.
                 delqi(k) = -qi(k)
                 delql(k) = -ql(k)
-                !q_dt(k,ic) = 0.0
                 ql(k) = 0.0
                 qi(k) = 0.0
 
-                !call calc_enthalpy_mass(T_tmp(l), m_ds(l), m_vs(l), m_ls(l), m_is(l), h_l0)
-                
                 md = m_ds(l)
                 mv = m_vs(l)
                 mv_new  = mv + m_cond
@@ -1187,12 +854,6 @@ contains
                    if (mv_new/(mv_new + md) .lt. 0.9*satq) then
                       ! All condensate succesfully evaporated
 
-!!$                      write(*,*) 'new'
-!!$                      write(*,*) k,l
-!!$                      write(*,*) qv_tmp(l), m_vs(l)/(m_vs(l) + md), m_vs(l)/(m_vs(l) + md + m_ls(l) + m_is(l))
-!!$                      write(*,*) 'm_ls(l), m_is(l)'
-!!$                      write(*,*) qv_tmp(l)*delp(l), m_vs(l)
-!!$                      write(*,*) delp(l), m_vs(l) + md, md, m_ds(l)
                       delqv(l) = delqv(l) + m_cond/delp(l)
                       
                       T_tmp(l) = T_guess
@@ -1201,21 +862,10 @@ contains
                       m_vs(l) = m_vs(l) + m_cond
                       q_dt_rainout(l) = qv_tmp(l) - qv(l)
 
-!!$                      write(*,*) 'qv_tmp(l) vs new'
-!!$                      write(*,*) l, qv_tmp(l), m_vs(l)/(m_vs(l) + md), qv_tmp(l)/(1. + delqv(l))
-!!$                      write(*,*) l, qv_tmp(l)*delp(l), m_vs(l)
-                      
                       m_is(k) = 0.0
                       m_ls(k) = 0.0
 
                      ! Move onto next layer with condensate
-!                      if (is_master() .and. omp_get_thread_num() .eq. 1) then
-!                         write(*,*) 'success'
-!                         write(*,*) 'k = ', k
-!                         write(*,*) 'l = ', l
-!                         write(*,*) 'ql(k) = ', ql(k)
-!                         write(*,*) 'qi(k) = ', qi(k)
-!                      endif
                       exit
                       
                    else if (l .eq. npz) then
@@ -1375,39 +1025,22 @@ contains
 
     ! ========================================================
     ! Uncomment for enthalpy diagnostics
-    if (is_master() ) then
-    haft = 0.0
-    h_also = 0.0
-    maft_v = 0.0
-    do m=1,npz
-       call calc_enthalpy_mass(T_tmp(m), m_ds(m), m_vs(m), m_ls(m), m_is(m), htmp)
-       h_also  = h_also + htmp
-       call calc_enthalpy(T_tmp(m), qv_tmp(m)/(1. + delqv(m) + delql(m) + delqi(m)),&
-            ql(l)/(1. + delqv(m) + delql(m) + delqi(m)),&
-            qi(l)/(1. + delqv(m) + delql(m) + delqi(m)),&
-            htmp)
-       haft = haft+htmp*delp(m)*(1 + delqv(m) + delql(m) + delqi(m))
-       !write(*,*) 'm', m, qv_tmp(m)/(1+ delqv(m) + delql(m) + delqi(m)), m_vs(m)/(m_ds(m) + m_ls(m) + m_is(m) + m_vs(m)), qv_tmp(m)
-       maft_v = maft_v + delp(m)*qv_tmp(m)
-    enddo
-!    if (i_loc ==is .and. j_loc ==js) then
-!       write(*,*) '------------------------------------------------------------'
-!       write(*,*) 'enthalpy change ', hbef, haft, h_also, abs((haft - hbef)/hbef)
-!       write(*,*) 'masses', mbef_v, mbef_i, mbef_l
-!       write(*,*) 'mass after',  mbef_v + mbef_i + mbef_l, maft_v
-!       write(*,*) 'l_evap', l_evap
-!       write(*,*) 't_dt_rainout', minval(dT)
-!       do k=1,npz
-!          write(*,*) k, delqv(k), delql(k), delqi(k), delql(k)+delqi(k)
-!       enddo
-!       write(*,*) ' -       -          -           -              -           - '
-!    endif
-    !    write(*,*) 'Testing dq'
+!    if (is_master() ) then
+!    haft = 0.0
+!    h_also = 0.0
+!    maft_v = 0.0
 !    do m=1,npz
-!
-!       write(*,*) m, delqv(m), delql(m), delqi(m), delqv(m) + delql(m) + delqi(m), q_dt_rainout(m)
+!       call calc_enthalpy_mass(T_tmp(m), m_ds(m), m_vs(m), m_ls(m), m_is(m), htmp)
+!       h_also  = h_also + htmp
+!       call calc_enthalpy(T_tmp(m), qv_tmp(m)/(1. + delqv(m) + delql(m) + delqi(m)),&
+!            ql(l)/(1. + delqv(m) + delql(m) + delqi(m)),&
+!            qi(l)/(1. + delqv(m) + delql(m) + delqi(m)),&
+!            htmp)
+!       haft = haft+htmp*delp(m)*(1 + delqv(m) + delql(m) + delqi(m))
+!       !write(*,*) 'm', m, qv_tmp(m)/(1+ delqv(m) + delql(m) + delqi(m)), m_vs(m)/(m_ds(m) + m_ls(m) + m_is(m) + m_vs(m)), qv_tmp(m)
+!       maft_v = maft_v + delp(m)*qv_tmp(m)
 !    enddo
- endif
+!    endif
     ! ========================================================
 
 
@@ -1417,7 +1050,7 @@ contains
     real, intent(in) :: T2_guess, p1, p2, dp1, dp2, q1_0, q2_0
     real, intent(out) :: dk_a
 
-    real :: qc_1, qc_2, qv_1, qv_2, qi_1, qi_2, k_out_up, k_out_dn, dqsat_dt, T_temp
+    real :: qc_1, qc_2, qv_1, qv_2, qi_1, qi_2, k_out_up, k_out_dn, T_temp
 
     real :: eps = 1.e-8
     ! Estimate derivative of dk_adj wrt T2_guess
@@ -1430,64 +1063,6 @@ contains
     dk_a = (k_out_up - k_out_dn)/eps
   end subroutine dk_adj
 
-  subroutine rain_out_single(delp, T, q, qc, h_cond)
-      !==========================================================================
-    ! Description
-    !==========================================================================
-    ! Does rain out and conserves mass + enthalpy in doing so
-
-    !==========================================================================
-    ! Input variables
-    !==========================================================================    
-    real, intent(in) :: T
-
-    !==========================================================================
-    ! Input/Output variables
-    !==========================================================================    
-    real, intent(inout) :: delp, q ,qc, h_cond
-    
-    !==========================================================================
-    ! Local variables
-    !==========================================================================    
-    real :: m_cond_tot, m_cond, rsat, T_guess, q0, rv
-    real :: required, temp
-
-    m_cond_tot = 0.0
-    
-       ! Mass loss
-       m_cond     = qc * delp/grav
-       m_cond_tot = m_cond_tot + m_cond
-
-       !=================================================================================
-       ! Development notes
-       !=================================================================================
-       ! Re-evaporated condensate
-       ! To do this in an enthalpy-conserving way, one would have to heat the condensate
-       ! from source level to destination level, and then evaporate it into the source layer.
-       ! This gives two equations in two variables -- mass of fallen condensate
-       ! and the final temperature of layer below. Can be solved with a 2D newton iteration
-       ! Easiest to do by going down layer by layer and testing for undersaturation, then
-       ! selecting available condensate from layers above to transport to that layer and
-       ! re-evaporate. What layer to select from though? Nearest layer, highest layer, layer
-       ! with the highest mass of condensate? Probably best to do nearest layer since higher
-       ! pressure thickness in log space will make it more likely to have enough available
-       ! condensate. 
-       !================================================================================
-
-!!$       if (T .lt. T_tp) then
-!!$          h_cond = h_cond + m_cond * (cp_v*(T-T_tp) - L_sub)
-!!$       else
-!!$          call find_var_simplified(T, 'hl', temp)
-!!$          h_cond = h_cond + m_cond * temp
-!!$       endif
-       
-       ! New q once condensate has rained out
-       q = q/(1 - qc)
-
-       delp = delp - m_cond*grav
-
-       qc = 0.0
-     end subroutine rain_out_single
 
      subroutine cold_trap(p, T, q, delp, ktrop)
        real, intent(inout) :: T(:)
@@ -1496,7 +1071,7 @@ contains
        integer, intent(in) :: ktrop
 
        integer ::k,m
-       real,dimension(size(T)) :: rs,qs, r0s, qs2, q0s
+       real,dimension(size(T)) :: rs,qs, r0s, qs2
        call r_sat(p,T,rs)
        r0s = q/(1-q)
        qs= rs/(1 + rs)
@@ -1519,6 +1094,7 @@ contains
        enddo
 
      end subroutine cold_trap
+     
   subroutine gradient(p,T, dlnTdlnp, dlnpsat_dlnt)
     !==========================================================================
     ! Description
@@ -1541,7 +1117,7 @@ contains
     ! Local variables
     !==========================================================================
 
-    real :: L, psat, qsat, rsat, num, denom, temp, R_av, cp_av, varpi, f_ice, t2
+    real :: L, qsat, rsat, num, denom, R_av, cp_av, varpi, f_ice, t2
 
     !==========================================================================
     ! Main body
@@ -1551,16 +1127,6 @@ contains
 
     L = L_sub*f_ice + (hv_tp - hl_tp + (cp_v-cp_liquid)*(T-T_tp))*(1-f_ice)
     
-!!$    if (T .lt. T_tp - T_low) then
-!!$       L = L_sub
-!!$    else if (T_.lt. T_tp .and. T .gt. T_tp-T_low) then
-!!$       f_ice = (T_tp - T)/(T_tp - T_low)
-!!$       L = L_sub*f_ice + (hv_tp - hl_tp)*(1 - f_ice)
-!!$    else
-!!$      L = (hv_tp - hl_tp) + (cp_v - cp_liquid)*(T - T_tp)
-!!$:    endif
-    !L = 2.5e6
-
 
     call r_sat_single(p,T,rsat)
     qsat = rsat/(1 + rsat)
@@ -1591,7 +1157,4 @@ contains
     ! adiabat -- correct
     !============================================================================
   end subroutine gradient
-
-  
-
 end module ding_convection

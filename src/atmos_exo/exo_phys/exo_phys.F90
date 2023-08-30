@@ -80,7 +80,7 @@ module exo_phys_mod
    use          mixed_layer_mod, only: mixed_layer, mixed_layer_init
    use FMS_dry_adj_Ray, only: Ray_dry_adj
 
-   use ding_convection, only: ding_adjust, rain_out_simple, large_scale_cond,&
+   use ding_convection, only: ding_adjust,large_scale_cond,&
         ding_adjust_init, rain_out_revap, calc_enthalpy
 
    use omp_lib
@@ -129,7 +129,6 @@ contains
       type(time_type), intent(in) :: Time
       integer, intent(in) :: axes(4)
 
-      integer :: k
       character(80) :: filename
       
       filename = "input.nml"
@@ -184,16 +183,6 @@ contains
       real   , intent(INOUT) ::   ua(is-ng:ie+ng,js-ng:je+ng,npz)
       real   , intent(INOUT) ::   va(is-ng:ie+ng,js-ng:je+ng,npz)
 
-      real    ::   dtau_du(is:ie,js:je)
-      real    ::   dtau_dv(is:ie,js:je)
-      real    ::   dsens_datmos(is:ie,js:je)
-      real    ::   devap_datmos(is:ie,js:je)
-      real,    dimension(is:ie,js:je)       :: tau_u, tau_v, sens, evap
-      real,    dimension(is:ie,js:je,1:npz)     :: dt_u, dt_v, dt_t, dt_q
-      real,    dimension(is:ie,js:je,1:npz,nq)   :: dt_tr
-      real,    dimension(is:ie,js:je,1:npz)     :: dissipative_heat
-
-
       ! Tendencies:
       real, intent(INOUT):: u_dt(is-ng:ie+ng,js-ng:je+ng,npz)
       real, intent(INOUT):: v_dt(is-ng:ie+ng,js-ng:je+ng,npz)
@@ -212,7 +201,7 @@ contains
       real :: t_dt_conv(is:ie,js:je,npz)
       real :: t_dt_conv_moist(is:ie,js:je,npz)
       real :: t_dt_conv_ding(is:ie,js:je,npz)
-      real :: q_dt_ding(is:ie,js:je,npz), q_dt_ding_test(is:ie,js:je,npz,nq)
+      real :: q_dt_ding(is:ie,js:je,npz)
       real :: q_dt_ding_vap(is:ie,js:je,npz)
       real :: q_dt_lsc(is:ie,js:je,npz), q_dt_rainout(is:ie,js:je,npz)
       real :: t_dt_lsc(is:ie,js:je,npz), t_dt_rainout(is:ie,js:je,npz)
@@ -243,8 +232,7 @@ contains
       real   :: direct_down(is:ie,js:je,1:npz+1)
       real   :: surf_lw_down(is:ie,js:je)
       real   :: surf_sw_down(is:ie,js:je)
-      integer :: i,j,k,l
-      real :: PI=4.D0*DATAN(1.D0)
+      integer :: i,j,k
 
       real, allocatable, dimension(:,:,:)   :: t_dt_rad
 
@@ -253,33 +241,20 @@ contains
 
       real  :: h_col(is:ie, js:je), h_col_new(is:ie,js:je)
       real  :: m_col(is:ie, js:je), m_col_new(is:ie,js:je)
-      real, dimension(is:ie, js:je, 1:npz) :: q_tmp, t_tmp
-      real :: htmp, mtmp
 ! ---
       logical, dimension(is:ie,js:je) ::                                       &
          avail,                &   ! generate surf. flux (all true)
-         land,                 &   ! land points (all false)
-         coldT                     ! should precipitation be snow at this point
+         land                      ! land points (all false)
 
       real, dimension(is:ie,js:je,1:npz) ::                                        &
          diff_m,               &   ! momentum diffusion coeff.
          diff_t,               &   ! temperature diffusion coeff.
-         diss_heat,            &   !  heat dissipated by vertical diffusion
-         non_diff_dt_ug,       &   ! zonal wind tendency except from vertical diffusion
-         non_diff_dt_vg,       &   ! merid. wind tendency except from vertical diffusion
-         non_diff_dt_tg,       &   ! temperature tendency except from vertical diffusion
-         non_diff_dt_qg,       &   ! moisture tendency except from vertical diffusion
-         conv_dt_tg,           &   ! temperature tendency from convection
-         conv_dt_qg,           &   ! moisture tendency from convection
-         cond_dt_tg,           &   ! temperature tendency from condensation
-         cond_dt_qg                ! moisture tendency from condensation
+         diss_heat                 !  heat dissipated by vertical diffusion
 
       real, dimension(is:ie,js:je,1:nq) ::                                        &
          flux_tr                 ! surface tracer flux
 
       real, dimension(is:ie,js:je)   ::                       &
-         z_surf,               &   ! surface height
-         t_surf,               &   ! surface temperature
          q_surf,               &   ! surface moisture
          u_surf,               &   ! surface U wind
          v_surf,               &   ! surface V wind
@@ -313,14 +288,11 @@ contains
          rough                     ! roughness for vert_turb_driver
 
       real, dimension(is:ie,js:je,2)   :: bucket_depth                ! added by LJJ
-      real, dimension(is:ie,js:je) :: dt_psg, dt_bucket, bucket_diffusion, filt   ! added by LJJ
 
       ! Nondiluteness
-      real, dimension(is:ie,js:je,npz) :: cp_local, q_sat_local
-      real :: p_loc
-      logical :: nondilute = .true.
+      real, dimension(is:ie,js:je,npz) :: cp_local
       logical :: stop_switch = .false.
-      integer :: vap, cond
+      integer :: vap
 
       !-----------------------------------------------------------------------------------------------
       !                                         ALLOCATIONS
@@ -854,7 +826,7 @@ t_dt_rad(is:ie,js:je,1:npz) = 0. ! Ensures t_dt_rad = 0 if radiation is turned o
             do i=is,ie
                call rain_out_revap(pt(i,j,:) + t_dt_conv_ding(i,j,:) + t_dt_lsc(i,j,:), &
                     p_mid(i,j,:), delp(i,j,:), q(i,j,:,vap) + q_dt_ding_vap(i,j,:) + q_dt_lsc(i,j,:), &
-                    q_liq(i,j,:), q_ice(i,j,:), q_dt_rainout(i,j,:), t_dt_rainout(i,j,:), i, j, is, js)
+                    q_liq(i,j,:), q_ice(i,j,:), q_dt_rainout(i,j,:), t_dt_rainout(i,j,:))
 
             enddo
          enddo
