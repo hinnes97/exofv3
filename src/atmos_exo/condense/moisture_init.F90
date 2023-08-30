@@ -104,7 +104,7 @@ contains
 
     if(cold_start) then       
        vap = get_tracer_index(MODEL_ATMOS, 'vapour')
-       cond   = get_tracer_index(MODEL_ATMOS, 'condensate' )
+       !cond   = get_tracer_index(MODEL_ATMOS, 'condensate' )
 !
        do k=1,npz
           do j=js,je
@@ -134,7 +134,7 @@ contains
           do j=js,je
              do i=is,ie
                 q(i,j,k,vap) = min(qsat(i,j,k), q0)
-                q(i,j,k,cond) = 0.0
+!                q(i,j,k,cond) = 0.0
              enddo
           enddo
        enddo
