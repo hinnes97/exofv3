@@ -109,7 +109,7 @@ echo "fv3_home = $fv3_home" >> $workdir/tmp_template
 # Use 'find' to make list of srcmod/*.f90 files. mkmf uses only the first instance of any file name.
 
 if [[ $skip_mkmf = false ]] ; then
-    find $exp_home/srcmods/ -maxdepth 1 -iname "*.f90" -o -iname "*.F90" -o -iname "*.inc" -o -iname "*.c" -o -iname "*.h" > $workdir/tmp_pathnames
+    find $exp_home/srcmods/ -maxdepth 1 -iname "*.f90" -o -iname "*.F90" -o -iname "*.inc" -o -iname "*.c" -o -iname "*.h" -o -iname "*.fh" > $workdir/tmp_pathnames
     echo "Using the following sourcecode modifications:"
     cat $workdir/tmp_pathnames
 
@@ -128,7 +128,7 @@ if [[ $skip_mkmf = false ]] ; then
     done
     exc_cmd+=(")")
 
-    find_args=($includes ${exc_cmd[@]} -prune -o \( -iname "*.f90" -o -iname "*.F90" -o -iname "*.inc" -o -iname "*.c" -o -iname "*.h" \) -print)
+    find_args=($includes ${exc_cmd[@]} -prune -o \( -iname "*.f90" -o -iname "*.F90" -o -iname "*.inc" -o -iname "*.c" -o -iname "*.h" -o -iname "*.fh" \) -print)
     set -x
     find "${find_args[@]}" >> $workdir/tmp_pathnames
 fi
@@ -232,17 +232,15 @@ for File in $interp_files ; do
     pfull=$(ncdump -v pfull $File | sed -ne '/ pfull =/,$ p' | cut -f 2 -d '=' | cut -f 1 -d ';' | sed '$d' | sed 's/,/\ /g'| tr '\n' ' ')
     pfull=($pfull)
 
-    # pfull_new=()
+    pfull_new=()
 
-    # for p in "${pfull[@]}" ; do
-    # 	test=$(printf %.0f $(echo "$p*100" | bc -l))
+    for p in "${pfull[@]}" ; do
+	test=$(echo "$p*100" | bc -l)
 
-    # 	if [[ "$test" != 0 && ! "${pfull_new[*]}" =~ "$test" ]] ; then
-    # 	    pfull_new=("${pfull_new[@]}" $test)
-    # 	fi
-    # done
+	pfull_new=("${pfull_new[@]}" $test)
+	pfull=("${pfull_new[@]}")
+    done
     
-    # pfull=("${pfull_new[@]}")
     (cd $pp_path ; plevel.bash -0 -a -p "${pfull[*]}" -i $File -o "${File%.*}_interp.nc")
 done
 
@@ -276,15 +274,18 @@ cp ../run.bash $output_dir
 mv RESTART $output_dir
 mv logfile* $output_dir
 
-cp -rf srcmods $output_dir
+cp -rf ../srcmods $output_dir
 
 echo "Moved data"
 
 #=========================================================================================
 # Plotting
 #=========================================================================================
+
 echo "Plotting"
+eval "$(conda shell.bash hook)"
+conda activate analyse
 plot_dir="$fv3_home/tools/plotting"
 
 python $plot_dir/plot_temp.py $output_dir --plevs $plot_plevels
-
+python $plot_dir/plot_pt.py $output_dir --lons 0 180 --lats 0 45
