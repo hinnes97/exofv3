@@ -6,21 +6,26 @@ module netcdf_send_mod
 
   contains
 
-    subroutine send_data_to_netcdf(is,ie,js,je,npz,n,Time,id_X,X)
+    subroutine send_data_to_netcdf(Time,id_X,X)
       implicit none
-      integer, intent(in) :: is,ie,js,je,npz,n
       type(time_type), intent(in)       :: Time
       integer, intent(in)               :: id_X
-      real, dimension(is:ie,js:je,n), intent(in) :: X
+      real, dimension(:,:,:), intent(in) :: X
       logical :: used
+      integer :: nx,ny
 
-      if ( id_X > 0 ) then
-        if (n .eq. npz+1) then 
-          used = send_data ( id_X, X(is:ie,js:je,2:n), Time)
-        else if (n .eq. npz) then
-          used = send_data ( id_X, X(is:ie,js:je,1:n), Time)
-        end if
-      end if
+      
+!      if ( id_X > 0 ) then
+!        if (n .eq. npz+1) then 
+!          used = send_data ( id_X, X(is:ie,js:je,2:n), Time)
+!        else if (n .eq. npz) then
+!          used = send_data ( id_X, X(is:ie,js:je,1:n), Time)
+!        end if
+!      end if
+
+      if (id_X > 0 ) then
+         used = send_data(id_X, X, Time)
+      endif
       
     end subroutine send_data_to_netcdf
 

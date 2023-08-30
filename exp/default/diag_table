@@ -25,3 +25,6 @@ Cubed-Sphere_C48
 "dynamics", "ucomp",     "ucomp",     "atmos_daily",  "all", .true.,  "none", 2,
 "dynamics", "vcomp",     "vcomp",     "atmos_daily",  "all", .true.,  "none", 2,
 "dynamics", "omega",     "omega",     "atmos_daily",  "all", .true.,  "none", 2,
+"dynamics", "net_F",     "net_F",     "atmos_daily",  "all", .true.,  "none", 2,
+"dynamics", "t_dt_lsc",     "t_dt_lsc",     "atmos_daily",  "all", .true.,  "none", 2,
+

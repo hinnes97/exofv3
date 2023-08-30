@@ -7,23 +7,30 @@ module netcdf_reg_mod
   real :: missing_value = -999.
   integer :: id_net_F, id_net_Fs, id_olr, id_opr_IR, id_opr_W1, id_opr_W2, id_opr_UV, id_opr_VIS1, id_opr_VIS2,&
              id_cff, id_scff, id_direct_down, id_t_dt_rad, id_t_dt_conv, id_t_dt_conv_moist, id_height, id_isr,&
-             id_surf_sw_down, id_surf_lw_down, id_flux_t
+             id_surf_sw_down, id_surf_lw_down, id_flux_t, id_t_dt_ding, id_t_dt_lsc, id_t_dt_rainout, &
+             id_q_dt_ding, id_q_dt_lsc, id_q_dt_rainout
 
   !integer, dimension(n_bands) :: id_net_F_bg
 
   contains
 
-    subroutine register_diagnostic_field(axes,Time,mod_name,quantity,label,units,id_X)
-      implicit none
+    subroutine register_diagnostic_field(axes,Time,mod_name,quantity,label,units,id_X, half)
+      
       integer, intent(in), dimension(4) :: axes
       type(time_type), intent(in)       :: Time
       character(len=*), intent(in)     :: mod_name, units
       character(len=*), intent(in)    :: quantity, label
       !logical, intent(in)               :: 3D ! X(lat,lon,z) or X(lat,lon) ?
       integer, intent(out)               :: id_X
+      logical, intent(in),optional                :: half
 
-      !if (3D .eqv. .true.) then
-      id_X = register_diag_field ( mod_name, quantity, axes(1:3), Time, label, units, missing_value=missing_value )
+!if (3D .eqv. .true.) then
+      if (present(half) .and. half) then
+         id_X = register_diag_field(mod_name, quantity, (/axes(1), axes(2), axes(4)/), Time, label, units, &
+              missing_value = missing_value)
+      else
+         id_X = register_diag_field ( mod_name, quantity, axes(1:3), Time, label, units, missing_value=missing_value )
+      endif
       !else
       !  id_X = register_diag_field ( mod_name, quantity, axes(1:2), Time, label, units, missing_value=missing_value )
       !end if
@@ -31,7 +38,7 @@ module netcdf_reg_mod
     end subroutine register_diagnostic_field
 
     subroutine register_diagnostic_field_2D(axes,Time,mod_name,quantity,label,units,id_X)
-      implicit none
+      
       integer, intent(in), dimension(4) :: axes
       type(time_type), intent(in)       :: Time
       character(len=*), intent(in)     :: mod_name, units
@@ -43,7 +50,7 @@ module netcdf_reg_mod
     end subroutine register_diagnostic_field_2D
 
     subroutine netcdf_reg_RT(axes,Time,scheme)!,n_bands)
-      implicit none
+      
       integer, intent(in), dimension(4) :: axes
       type(time_type), intent(in)       :: Time
       CHARACTER(LEN=*), intent(in) :: scheme
@@ -82,7 +89,7 @@ module netcdf_reg_mod
        case('ts_short_char')
 
          call register_diagnostic_field(axes,Time,"dynamics",'net_F',&
-                                        &'net flux','watts/m2',id_net_F)
+                                        &'net flux','watts/m2',id_net_F, .true.)
          call register_diagnostic_field_2D(axes,Time,"dynamics",'olr',&
                                         &'outgoing radiation','watts/m2',id_olr)
          call register_diagnostic_field(axes,Time,"dynamics",'direct_down',&
@@ -127,4 +134,23 @@ module netcdf_reg_mod
                                         &'flux_t','m',id_flux_t)
     end subroutine netcdf_reg_RT
 
+    subroutine netcdf_reg_ding(axes,Time)
+
+      integer, intent(in), dimension(4) :: axes
+      type(time_type), intent(in)       :: Time
+      
+      call register_diagnostic_field(axes, Time, "dynamics", 't_dt_ding', &
+           'temperature tendency due to ding convection', 'K/s', id_t_dt_ding)
+      call register_diagnostic_field(axes, Time, "dynamics", 't_dt_lsc', &
+           'temperature tendency due to large scale condensation', 'K/s', id_t_dt_lsc)
+      call register_diagnostic_field(axes, Time, "dynamics", 't_dt_raionut', &
+           'temperature tendency due to rainout (re-evaporation)', 'K/s', id_t_dt_rainout)
+      call register_diagnostic_field(axes, Time, "dynamics", 'q_dt_ding', &
+           'vapour tendency due to ding convection', 'kg/kg/s', id_q_dt_ding)
+      call register_diagnostic_field(axes, Time, "dynamics", 'q_dt_lsc', &
+           'vapour tendency due to large scale condensation', 'kg/kg/s', id_q_dt_lsc)
+      call register_diagnostic_field(axes, Time, "dynamics", 'q_dt_lsc', &
+           'vapour tendency due to rainout (re-evaporation)', 'kg/kg/s', id_q_dt_rainout)
+
+    end subroutine netcdf_reg_ding
 end module netcdf_reg_mod

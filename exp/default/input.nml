@@ -1,12 +1,16 @@
  &main_nml
-     days = 20
-     dt_atmos = 200
-     atmos_nthreads = 1
+     days = 10
+     dt_atmos = 500
+     atmos_nthreads = 2
 /
 &fms_nml
     clock_grain = 'LOOP'
-    domains_stack_size =  10000000
+    domains_stack_size =  100000000
     print_memory_usage = .true.
+/
+
+&fv_nest_nml
+    p_split = 5
 /
 
 &fms_io_nml
@@ -19,10 +23,10 @@
 /
 
 &fv_core_nml
-    layout = 2, 2
+    layout = 2,2
     npx = 25
     npy = 25
-    npz = 50
+    npz = 60
     ntiles = 6
     do_held_suarez = .false.
     adiabatic = .false.
@@ -30,7 +34,7 @@
     grid_type = 0
     warm_start = .false.
     vtdm4 = 0.1
-    io_layout = 2, 2
+    io_layout = 2,2
     nwat = 0
     inline_q = .true.
     nord = 2
@@ -43,6 +47,9 @@
     hydrostatic = .true.
     n_sponge = 0
     non_dilute = .true.
+    p_ref = 1.e7
+    no_dycore = .false.
+    fill = .true.
 /
 
 &fv_grid_nml
@@ -102,14 +109,15 @@
     do_simple_bl = .false.
     do_vert_diff_bl = .false.
     do_ding_convection = .true.
+    r_split = 1
 /
 
 &rad_coupler_nml
     rad_scheme='ts_short_char'
     I0  = 680.0
-    Tint = 0.0
-    tau_IRe0 = 100
-    tau_Ve0  = 10.0
+    Tint = 50.0
+    tau_IRe0 = 500.0
+    tau_Ve0  = 50.0
     n_ir = 1.0
     n_v = 1.0
     f1 = 0.5
@@ -117,24 +125,25 @@
 
 &fv_eta_nml
     flexible_grid = .true.
-    pbot = 3.e6
+    pbot = 1.e7
     pup = 0.1
-    plin = 10.
+    plin = 1.
 /
 
 &initialisation_nml
     init_type = 2
-    Ts = 300.
+    Ts = 800
     T_strat = 200.
     S = 680.0
     f = 0.25
-    tau_sw = 10
-    tau_lw = 100
-    tint =0.0
-    surface_pressure = 3.e6
+    tau_sw = 100.0
+    tau_lw = 5000.0
+    tint =50.0
+    surface_pressure = 1.e7
 /
 
 &init_moisture_nml
-    q0 = 3.e-6
+    q0 = 0.5
 /    
 
+     

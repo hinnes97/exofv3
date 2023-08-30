@@ -67,7 +67,8 @@ module exo_phys_mod
    use netcdf_reg_mod,      only: id_net_F, id_net_Fs, id_olr, id_opr_IR, id_opr_W1, id_opr_W2, id_opr_UV,&
                                   id_opr_VIS1, id_opr_VIS2, id_cff, id_scff, id_direct_down, id_t_dt_rad,&
                                   id_t_dt_conv, id_t_dt_conv_moist, id_height, id_isr, id_surf_sw_down,&
-                                  id_surf_lw_down, id_flux_t
+                                  id_surf_lw_down, id_flux_t, id_t_dt_ding, id_t_dt_lsc, id_t_dt_rainout, &
+                                  id_q_dt_ding, id_q_dt_rainout, id_q_dt_lsc
 
 
    use         surface_flux_mod, only: surface_flux
@@ -83,9 +84,11 @@ module exo_phys_mod
         ding_adjust_init, rain_out_revap, calc_enthalpy
 
    use omp_lib
+   use sat_props_mod, only: sat_vp
 
    implicit none
 
+   integer :: rsc ! r_split_count
    logical :: rf_initialized = .false.
 
    private
@@ -94,7 +97,8 @@ module exo_phys_mod
    type(surf_diff_type) :: Tri_surf
 
    namelist /exo_phys_nml/ relax_module, surface_on, tidally_locked, cp_surf, do_dry_adjustment, do_moist_H2O_adjustment, &
-           do_virtual, do_simple_bl, do_vert_diff_bl, do_dry_convection, do_condensation, do_dry_adj_el, conv_timescale, do_ding_convection
+        do_virtual, do_simple_bl, do_vert_diff_bl, do_dry_convection, do_condensation, do_dry_adj_el, conv_timescale, do_ding_convection, &
+        r_split
 
 
    logical :: relax_module = .false.
@@ -111,7 +115,7 @@ module exo_phys_mod
    logical :: do_simple_bl = .true.
    logical :: do_vert_diff_bl = .false.
    logical :: do_ding_convection = .true.
-
+   integer :: r_split  = 1 ! do radiation every r_split*dt_atmos
 
 
 
@@ -121,10 +125,13 @@ contains
    subroutine Exo_Tend_init(is,ie,js,je,npz,nq,Time,axes)
       integer, intent(in) :: is,ie,js,je,npz,nq
       integer :: f_unit, unit, ios ! Namelist reading
-      character(80) :: filename
+      
       type(time_type), intent(in) :: Time
-      integer :: axes(4)
+      integer, intent(in) :: axes(4)
 
+      integer :: k
+      character(80) :: filename
+      
       filename = "input.nml"
       f_unit = get_unit()
       open (f_unit,file=filename)
@@ -141,8 +148,11 @@ contains
       end if
       if (do_simple_bl) call simple_boundary_init
 
-      if (do_ding_convection) call ding_adjust_init
+      if (do_ding_convection) call ding_adjust_init(Time, axes)
 
+      ! Set radiation split counter (make first timestep compute radiation)
+      rsc = r_split
+      
    end subroutine Exo_Tend_init
 
 
@@ -306,7 +316,8 @@ contains
       real, dimension(is:ie,js:je) :: dt_psg, dt_bucket, bucket_diffusion, filt   ! added by LJJ
 
       ! Nondiluteness
-      real, dimension(is:ie,js:je,npz) :: cp_local
+      real, dimension(is:ie,js:je,npz) :: cp_local, q_sat_local
+      real :: p_loc
       logical :: nondilute = .true.
       logical :: stop_switch = .false.
       integer :: vap, cond
@@ -331,7 +342,8 @@ enddo
 ts_dt(is:ie,js:je) = 0.0
 
 ! CHECK FOR NANS
-!$OMP parallel do default(none) shared(npz,js,je,is,ie,pt,stop_switch,u,v)      
+vap = get_tracer_index(MODEL_ATMOS, 'vapour')
+!$OMP parallel do default(none) shared(npz,js,je,is,ie,pt,stop_switch,u,v,q,vap)      
       do k=1,npz
          do j=js,je
             do i=is,ie
@@ -351,6 +363,10 @@ ts_dt(is:ie,js:je) = 0.0
                   write(*,*) 'NaN in v array @ i,j,k ', i,j,k
                   stop
                endif
+               if (q(i,j,k,vap) .lt. 0.0) then
+                  write(*,*) 'q<0', i,j,k
+                  stop
+               endif
             enddo
          enddo
       enddo
@@ -362,61 +378,59 @@ ts_dt(is:ie,js:je) = 0.0
       !                                          RELAXATION
       !-----------------------------------------------------------------------------------------------
 
-      if (relax_module) then
-         call relax_tend(npx, npy, npz, is, ie, js, je, ng, nq,   &
-            pt, pe, delp, peln, pkz,   &
-            t_dt(is:ie,js:je,1:npz), agrid,  &
-            delz, hydrostatic,   &
-            master, Time)
-      end if
-
+      
 
       !-----------------------------------------------------------------------------------------------
       !                                          RADIATION
       !-----------------------------------------------------------------------------------------------
 
-
-      t_dt_rad(is:ie,js:je,1:npz) = 0. ! Ensures t_dt_rad = 0 if radiation is turned off
+t_dt_rad(is:ie,js:je,1:npz) = 0. ! Ensures t_dt_rad = 0 if radiation is turned off
+      if (rsc == r_split) then
 !$OMP parallel do default(none) shared(js,je,is,ie,npz,p_mid,delp,pe,p_edge)      
-     do j = js,je
-        do i = is,ie
-            do k = 1, npz
-               p_mid(i,j,k) = delp(i,j,k) / log(pe(i,k+1,j)/pe(i,k,j))
-            end do
-
-            do k = 1, npz+1
-               p_edge(i,j,k) = pe(i,k,j)
-            end do
-         end do
-      end do
-
-      call rad_coupler(surface_on, tidally_locked, is, ie, js, je, npz, ng, ts(is:ie,js:je), pt(is:ie,js:je,1:npz), p_mid(is:ie,js:je,1:npz), &
-            p_edge(is:ie,js:je,1:npz+1), agrid(is:ie,js:je,1:2), net_F, olr, opr_IR, opr_W1, opr_W2, opr_UV, opr_VIS1, opr_VIS2, net_Fs,&
-            surf_lw_down(is:ie,js:je), surf_sw_down(is:ie,js:je), cff, scff, direct_down)
-
-      if (non_dilute) then
-         vap = get_tracer_index(MODEL_ATMOS, 'vapour')
-!$OMP parallel do default(none) shared(is,ie,js,je,npz,cp_local,vap,q,t_dt_rad, &
-!$OMP                               net_F, delp)
-         do j=js,je
-            do k=1,npz
-               do i=is,ie
-                  cp_local(i,j,k) = cp_air*(1-q(i,j,k,vap)) + cp_vapor*q(i,j,k,vap)
-                  t_dt_rad(i,j,k) = grav/cp_local(i,j,k) * (net_F(i,j,k+1) - net_F(i,j,k))/delp(i,j,k)
-               enddo
-            enddo
-         enddo
-      else
-!$OMP parallel do default(none) shared(is,ie,js,je,npz,t_dt_rad,net_F, delp)
          do j = js,je
-            do k = 1, npz
-               do i = is,ie                   
-                  t_dt_rad(i,j,k) = (grav/cp_air) * (net_F(i,j,k+1)-net_F(i,j,k))/delp(i,j,k)
+            do i = is,ie
+               do k = 1, npz
+                  p_mid(i,j,k) = delp(i,j,k) / log(pe(i,k+1,j)/pe(i,k,j))
+               end do
+
+               do k = 1, npz+1
+                  p_edge(i,j,k) = pe(i,k,j)
                end do
             end do
          end do
-      endif
 
+         call rad_coupler(surface_on, tidally_locked, is, ie, js, je, npz, ng, ts(is:ie,js:je), pt(is:ie,js:je,1:npz), p_mid(is:ie,js:je,1:npz), &
+              p_edge(is:ie,js:je,1:npz+1), agrid(is:ie,js:je,1:2), net_F, olr, opr_IR, opr_W1, opr_W2, opr_UV, opr_VIS1, opr_VIS2, net_Fs,&
+              surf_lw_down(is:ie,js:je), surf_sw_down(is:ie,js:je), cff, scff, direct_down)
+
+         if (non_dilute) then
+            vap = get_tracer_index(MODEL_ATMOS, 'vapour')
+!$OMP parallel do default(none) shared(is,ie,js,je,npz,cp_local,vap,q,t_dt_rad, &
+!$OMP                               net_F, delp, r_split)
+            do j=js,je
+               do k=1,npz
+                  do i=is,ie
+                     cp_local(i,j,k) = cp_air*(1-q(i,j,k,vap)) + cp_vapor*q(i,j,k,vap)
+                     t_dt_rad(i,j,k) = grav/cp_local(i,j,k) * (net_F(i,j,k+1) - net_F(i,j,k))/delp(i,j,k)
+                     t_dt_rad(i,j,k) = t_dt_rad(i,j,k)*r_split
+                  enddo
+               enddo
+            enddo
+         else
+!$OMP parallel do default(none) shared(is,ie,js,je,npz,t_dt_rad,net_F, delp, r_split)
+            do j = js,je
+               do k = 1, npz
+                  do i = is,ie                   
+                     t_dt_rad(i,j,k) = (grav/cp_air) * (net_F(i,j,k+1)-net_F(i,j,k))/delp(i,j,k)
+                     t_dt_rad(i,j,k) = t_dt_rad(i,j,k)*r_split
+                  end do
+               end do
+            end do
+         endif
+         rsc = 1
+      else
+         rsc = rsc + 1
+      endif
       !-----------------------------------------------------------------------------------------------
       !                                    BOTTOM BOUNDARY EFFECTS
       !-----------------------------------------------------------------------------------------------
@@ -676,19 +690,27 @@ ts_dt(is:ie,js:je) = 0.0
          enddo
          vap = get_tracer_index(MODEL_ATMOS, 'vapour')
 
-         ! Calculate initial h and m
-         h_col(is:ie,js:je) = 0.0
-         m_col(is:ie,js:je) = 0.0
-         Do i = is,ie
-           do j=js,je
-               do k=1,npz
-                  call calc_enthalpy(pt(i,j,k), q(i,j,k,vap), 0.0,0.0, htmp)
-                  h_col(i,j) = h_col(i,j) + htmp*delp(i,j,k)
+!         ! Calculate initial h and m
+!         h_col(is:ie,js:je) = 0.0
+!         m_col(is:ie,js:je) = 0.0
+!         Do i = is,ie
+!           do j=js,je
+!               do k=1,npz
+!                  call calc_enthalpy(pt(i,j,k), q(i,j,k,vap), 0.0,0.0, htmp)
+!                  h_col(i,j) = h_col(i,j) + htmp*delp(i,j,k)
+!
+!                  m_col(i,j) = m_col(i,j) + q(i,j,k,vap)*delp(i,j,k)
+!               enddo
+!            enddo
+!         enddo
 
-                  m_col(i,j) = m_col(i,j) + q(i,j,k,vap)*delp(i,j,k)
-               enddo
-            enddo
-         enddo
+      if (relax_module) then
+         call relax_tend(npx, npy, npz, is, ie, js, je, ng, nq,   &
+            pt, pe, delp, peln, pkz,   &
+            t_dt(is:ie,js:je,1:npz), agrid,  &
+            delz, hydrostatic,   &
+            master, Time)
+      end if
 
 !$OMP parallel do default(none) shared(is,ie,js,je,p_mid, delp, pt, q, t_dt_conv_ding ,q_liq,&
 !$OMP                               q_ice, q_dt_ding_vap)         
@@ -698,6 +720,8 @@ ts_dt(is:ie,js:je) = 0.0
                     t_dt_conv_ding(i,j,:), q_dt_ding_vap(i,j,:), q_liq(i,j,:), q_ice(i,j,:))
             enddo
          enddo
+         
+
 
 ! Keep condensate from ding convection in special variable
 ! Explanation -- we need to track mass lost from each layer to conserve enthalpy and mass
@@ -710,14 +734,14 @@ ts_dt(is:ie,js:je) = 0.0
 ! routine where in a reindexed layer decrease in vapour != increase in condensate
 
          !$OMP parallel do default(none) shared(is,ie,js,je,npz,q_correct, q_ice, q_liq, q_dt_ding_vap)
-         do k=1,npz
+        do k=1,npz
             do j=js,je
                do i=is,ie
                   q_correct(i,j,k) = q_liq(i,j,k) + q_ice(i,j,k) + q_dt_ding_vap(i,j,k)
                enddo
             enddo
          enddo
-         
+
 !         if (is_master()) then
 !            write(*,*) 'Post ding convection'
 !            write(*,*) maxval(abs(t_dt_conv_ding(is:ie,js:je,:))), maxval(abs(q_dt_ding(is:ie,js:je,:,vap))), maxval(abs(q_liq(is:ie,js:je,:))), maxval(abs(q_ice(is:ie,js:je,:)))
@@ -768,11 +792,13 @@ ts_dt(is:ie,js:je) = 0.0
 !            enddo
 !         enddo
 !
-!         if (is_master()) then
+         if (is_master()) then
+            write(*,*) 't_dt_ding'
+            write(*,*) maxval(abs(t_dt_conv_ding(is:ie,js:je,:))), maxloc(abs(t_dt_conv_ding(is:ie,js:je,:)))
 !            write(*,*) 'Ding convection mass and enthalpy change'
 !            write(*,*) 'Enthalpy: ', maxval(abs((h_col_new(is:ie,js:je) - h_col(is:ie,js:je))/h_col(is:ie,js:je)))
 !            write(*,*) 'H2O mass: ', maxval(abs((m_col_new(is:ie,js:je)-m_col(is:ie,js:je))/m_col(is:ie,js:je)))
-!         endif
+         endif
 !
 !         h_col(is:ie,js:je) = h_col_new(is:ie,js:je)
 !         m_col(is:ie,js:je) = m_col_new(is:ie,js:je)
@@ -792,6 +818,7 @@ ts_dt(is:ie,js:je) = 0.0
 
             enddo
          enddo
+         
          !! =========================================================================================
          !! Uncomment for enthalpy and mass diagnostics
 !         h_col_new(is:ie,js:je) = 0.0
@@ -810,11 +837,11 @@ ts_dt(is:ie,js:je) = 0.0
 !            enddo
 !        enddo
 !
-!        if (is_master()) then
-!           write(*,*) 'LSC mass and enthalpy change'
-!           write(*,*) 'Enthalpy: ', maxval(abs((h_col_new(is:ie,js:je) - h_col(is:ie,js:je))/h_col(is:ie,js:je)))
-!           write(*,*) 'H2O mass: ', maxval(abs((m_col_new(is:ie,js:je)-m_col(is:ie,js:je))/m_col(is:ie,js:je)))
-!        endif
+        if (is_master()) then
+           write(*,*) 'LSC mass and enthalpy change'
+           write(*,*) 'Enthalpy: ', maxval(abs((h_col_new(is:ie,js:je) - h_col(is:ie,js:je))/h_col(is:ie,js:je)))
+           write(*,*) 'H2O mass: ', maxval(abs((m_col_new(is:ie,js:je)-m_col(is:ie,js:je))/m_col(is:ie,js:je)))
+        endif
 !        
 !         h_col(is:ie,js:je) = h_col_new(is:ie,js:je)
 !         m_col(is:ie,js:je) = m_col_new(is:ie,js:je)
@@ -859,8 +886,9 @@ ts_dt(is:ie,js:je) = 0.0
 !               enddo
 !            enddo
 !         enddo
-!
-!         if (is_master()) then
+
+         ! Uncomment for enthalpy diagnostics
+!         if (is_master() .and. omp_get_thread_num() .eq. 0) then
 !            write(*,*) '======================================================================================='
 !            write(*,*) 'Rain out mass and enthalpy change'
 !            write(*,*) 'Enthalpy: ', maxval(abs((h_col_new(is:ie,js:je) - h_col(is:ie,js:je))/h_col(is:ie,js:je)))
@@ -868,12 +896,14 @@ ts_dt(is:ie,js:je) = 0.0
 !            write(*,*) '======================================================================================='
 !            write(*,*) 'Summary of output'
 !            write(*,*) 't_dt_conv_ding, t_dt_lsc, t_dt_rainout'
-!            write(*,*) maxval(t_dt_conv_ding(is:ie,js:je,:)), maxval(t_dt_lsc(is:ie,js:je,:)), minval(t_dt_rainout(is:ie,js:je,:))
+!            write(*,*) maxval(abs(t_dt_conv_ding(is:ie,js:je,:))), maxval(abs(t_dt_lsc(is:ie,js:je,:))), minval(t_dt_rainout(is:ie,js:je,:))
+!            !write(*,*) maxval(abs(t_dt_rad(is:ie,js:je,:)*dt_atmos))
+!            write(*,*) maxloc(abs(t_dt_conv_ding(is:ie,js:je,:))), maxloc(abs(t_dt_rainout(is:ie,js:je,:)))
 !            write(*,*) 'q_dt_conv_ding, q_dt_lsc, q_dt_rainout'
-!            write(*,*) maxval(q_dt_ding_vap(is:ie,js:je,:)), maxval(q_dt_lsc(is:ie,js:je,:)), maxval(q_dt_rainout(is:ie,js:je,:))
-!            write(*,*) 'maxval sum q_dt'
+!            !write(*,*) q_Dt_ding_vap(1,24,15), q_dT_lsc(1,24,15), q_dt_rainout(1,24,15), q(1,24,15,vap)
+!            write(*,*) maxval(abs(q_dt_ding_vap(is:ie,js:je,:))), maxval(abs(q_dt_lsc(is:ie,js:je,:))), maxval(abs(q_dt_rainout(is:ie,js:je,:)))
 !            do k=1,npz
-!               write(*,*) k,q_dt_ding_vap(is,js,k), q_dt_lsc(is,js,k), q_dt_rainout(is,js,k)
+!               write(*,*) k, pt(is,js,k), q(is,js,k,vap)
 !            enddo
 !         endif
 !         !! =========================================================================================
@@ -883,7 +913,10 @@ ts_dt(is:ie,js:je) = 0.0
          do k=1,npz
             do j=js,je
                do i=is,ie
-                  q_dt_ding(i,j,k)= (q_dt_ding_vap(i,j,k) + q_dt_lsc(i,j,k) + q_dt_rainout(i,j,k))/dt_atmos
+                  q_dt_ding_vap(i,j,k) = q_dt_ding_vap(i,j,k)/dt_atmos
+                  q_dt_lsc(i,j,k) = q_dt_lsc(i,j,k)/dt_atmos
+                  q_dt_rainout(i,j,k)  = q_dt_rainout(i,j,k)/dt_atmos
+                  q_dt_ding(i,j,k)= q_dt_ding_vap(i,j,k) + q_dt_lsc(i,j,k) + q_dt_rainout(i,j,k)
                   t_dt_conv_ding(i,j,k) = t_dt_conv_ding(i,j,k)/dt_atmos
                   t_dt_lsc(i,j,k) = t_dt_lsc(i,j,k)/dt_atmos
                   t_dt_rainout(i,j,k) = t_dt_rainout(i,j,k)/dt_atmos
@@ -953,7 +986,7 @@ ts_dt(is:ie,js:je) = 0.0
       !if ( id_X > 0 ) then
       !  used = send_data ( id_X, X, Time)
       !endif
-      call send_data_to_netcdf(is,ie,js,je,npz,npz+1,Time,id_net_F,net_F)
+      call send_data_to_netcdf(Time,id_net_F,net_F)
       call send_2D_data_to_netcdf(is,ie,js,je,Time,id_olr,olr)
       call send_2D_data_to_netcdf(is,ie,js,je,Time,id_opr_IR,opr_IR)
       call send_2D_data_to_netcdf(is,ie,js,je,Time,id_opr_W1,opr_W1)
@@ -961,17 +994,26 @@ ts_dt(is:ie,js:je) = 0.0
       call send_2D_data_to_netcdf(is,ie,js,je,Time,id_opr_UV,opr_UV)
       call send_2D_data_to_netcdf(is,ie,js,je,Time,id_opr_VIS1,opr_VIS1)
       call send_2D_data_to_netcdf(is,ie,js,je,Time,id_opr_VIS2,opr_VIS2)
-      call send_data_to_netcdf(is,ie,js,je,npz,npz,Time,id_cff,cff)
+      call send_data_to_netcdf(Time,id_cff,cff)
       call send_2D_data_to_netcdf(is,ie,js,je,Time,id_scff,scff)
-      call send_data_to_netcdf(is,ie,js,je,npz,npz+1,Time,id_direct_down,direct_down)
-      call send_data_to_netcdf(is,ie,js,je,npz,npz,Time,id_t_dt_rad,t_dt_rad)
-      call send_data_to_netcdf(is,ie,js,je,npz,npz,Time,id_t_dt_conv,t_dt_conv)
-      call send_data_to_netcdf(is,ie,js,je,npz,npz,Time,id_height,height(:,:,1:npz))
-      call send_data_to_netcdf(is,ie,js,je,npz,npz,Time,id_t_dt_conv_moist,t_dt_conv_moist)
+      call send_data_to_netcdf(Time,id_direct_down,direct_down)
+      call send_data_to_netcdf(Time,id_t_dt_rad,t_dt_rad)
+      call send_data_to_netcdf(Time,id_t_dt_conv,t_dt_conv)
+      call send_data_to_netcdf(Time,id_height,height(:,:,1:npz))
+      call send_data_to_netcdf(Time,id_t_dt_conv_moist,t_dt_conv_moist)
 
       call send_2D_data_to_netcdf(is,ie,js,je,Time,id_surf_sw_down,surf_sw_down)
       call send_2D_data_to_netcdf(is,ie,js,je,Time,id_surf_lw_down,surf_lw_down)
       call send_2D_data_to_netcdf(is,ie,js,je,Time,id_flux_t,flux_t)
+
+      if (do_ding_convection) then
+         call send_data_to_netcdf(Time, id_t_dt_ding, t_dt_conv_ding)
+         call send_data_to_netcdf(Time, id_t_dt_lsc, t_dt_lsc)
+         call send_data_to_netcdf(Time, id_t_dt_rainout, t_dt_rainout)
+         call send_data_to_netcdf(Time, id_q_dt_ding, q_dt_ding_vap)
+         call send_data_to_netcdf(Time, id_q_dt_rainout, q_dt_rainout)
+         call send_data_to_netcdf(Time, id_q_dt_lsc, q_dt_lsc)
+      endif
       !-----------------------------------------------------------------------------------------------
       !                                         DEALLOCATIONS
       !-----------------------------------------------------------------------------------------------
