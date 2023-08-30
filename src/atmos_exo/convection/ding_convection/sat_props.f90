@@ -34,7 +34,7 @@ contains
     
     ! Over vapour
     L0 = hv_tp - hl_tp
-    log_p_p0 = (1./T- 1./T_TP)*((cp_v - cp_liquid) - L0)/rvgas + (cp_v-cp_liquid)/rvgas*log(T/T_TP)
+    log_p_p0 = (1./T- 1./T_TP)*((cp_v - cp_liquid)*T_TP - L0)/rvgas + (cp_v-cp_liquid)/rvgas*log(T/T_TP)
     sat_p_l = exp(log_p_p0)*P_TP
 
     ! Over ice
