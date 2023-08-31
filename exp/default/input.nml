@@ -1,5 +1,5 @@
  &main_nml
-     days = 10
+     days = 3
      dt_atmos = 600
      atmos_nthreads = 2
 /
@@ -32,7 +32,7 @@
     adiabatic = .false.
     print_freq = 24
     grid_type = 0
-    warm_start = .false.
+    warm_start = ${warm_start}
     vtdm4 = 0.1
     io_layout = 2,2
     nwat = 0
@@ -47,9 +47,9 @@
     hydrostatic = .true.
     n_sponge = 0
     non_dilute = .true.
-    p_ref = 1.e7
+    p_ref = ${psurf}
     no_dycore = .false.
-    fill = .true.
+    fill = .false.
 /
 
 &fv_grid_nml
@@ -125,7 +125,7 @@
 
 &fv_eta_nml
     flexible_grid = .true.
-    pbot = 1.e7
+    pbot = ${psurf}
     pup = 0.1
     plin = 1.
 /
@@ -139,7 +139,7 @@
     tau_sw = 100.0
     tau_lw = 5000.0
     tint =50.0
-    surface_pressure = 1.e7
+    surface_pressure = ${psurf}
 /
 
 &init_moisture_nml

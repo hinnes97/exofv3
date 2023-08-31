@@ -11,15 +11,22 @@ Help()
   echo "--------------------------------"
   echo "-s --skip-mkmf    Skip building of Makefile and go straight to "
   echo "                  compilation of model"
-    }
-TEMP=$(getopt -o s,h --long skip-mkmf,help -- "$@")
+  echo "-i --init-cond    Path to restart files (default empty str = cold start)"
+  echo "-r --rst-time     Time, in days, of restart (default 0)"
+}
+
+TEMP=$(getopt -o s,i:,r:,h --long skip-mkmf,init-cond,rst-time,help -- "$@")
 
 skip_mkmf=false
+init_cond=""
+rst_time=0
 
 eval set -- "$TEMP"
 while true ; do
     case "$1" in
 	-s|--skip-mkmf       ) skip_mkmf=true ; shift 1;;
+	-i|--init-cond       ) init_cond="$2"   ; shift 2;;
+	-r|--rst-time        ) rst_time="$2"    ; shift 2;;
 	-h|--help            ) Help ; exit 1 ; shift 1 ;;
 	--                   ) shift ; break ;;
 	*                    ) echo "Error parsing"; exit 1 ;;
@@ -35,7 +42,10 @@ if [[ ! -f user_config ]] ; then
     echo "No file named 'user_config' found. Create one with the same format as user_config_example"
     exit 1
 fi
+
+set -a # Automatically export variables in this file
 source user_config
+set +a
 
 #====================================================================================================
 # Set important paths
@@ -77,11 +87,7 @@ set -x
 echo Working directory is $PWD
 rm -rf workdir
 # set initial conditions and move to executable directory
-mkdir restart-files
 
-if [[ $init_cond != "" ]] ; then 
-    cp $init_cond/* $exp_home/restart-files
-fi
 
 execdir=$PWD/exec.$platform       # where code is compiled and executable is created
 workdir=$PWD/workdir              # where model is run and model output is produced
@@ -92,15 +98,24 @@ diagtable=$PWD/diag_table           # path to diagnositics table
 fieldtable=$PWD/field_table         # path to field table (specifies tracers)
 
 if [[ ! -d $execdir ]] ; then mkdir $execdir ; fi
+rm -rf $workdir
+
+
 # if [[ -e $workdir ]] ; then
 #   echo "ERROR: Existing workdir may contaminate run.  Move or remove $workdir and try again."
 #   exit 1
 # fi
 mkdir $workdir $workdir/INPUT $workdir/RESTART
-cp -r $cwd/restart-files/* $workdir/INPUT/
+#cp -r $PWD/restart-files/* $workdir/INPUT/
 
 /bin/cp $template $workdir/tmp_template
 echo "fv3_home = $fv3_home" >> $workdir/tmp_template
+
+export warm_start=.false.
+if [[ -n "$init_cond" ]] ; then 
+    cp $init_cond/* $workdir/INPUT/
+    export warm_start=.true.
+fi
 
 #====================================================================================================
 # Find list of model source code and append to tmp_pathnames, to be read by mkmf
@@ -169,7 +184,7 @@ fi
 # Run the model
 #====================================================================================================
 cd $workdir
-cp $namelist input.nml
+cat $namelist | envsubst > input.nml
 cp $diagtable diag_table
 cp $fieldtable field_table
 cp $execdir/fms.x fms.x
@@ -234,12 +249,14 @@ for File in $interp_files ; do
 
     pfull_new=()
 
+    set +x
     for p in "${pfull[@]}" ; do
 	test=$(echo "$p*100" | bc -l)
 
 	pfull_new=("${pfull_new[@]}" $test)
 	pfull=("${pfull_new[@]}")
     done
+    set -x
     
     (cd $pp_path ; plevel.bash -0 -a -p "${pfull[*]}" -i $File -o "${File%.*}_interp.nc")
 done
@@ -282,9 +299,6 @@ echo "Moved data"
 # Plotting
 #=========================================================================================
 
-echo "Plotting"
-eval "$(conda shell.bash hook)"
-conda activate analyse
 plot_dir="$fv3_home/tools/plotting"
 
 python $plot_dir/plot_temp.py $output_dir --plevs $plot_plevels
