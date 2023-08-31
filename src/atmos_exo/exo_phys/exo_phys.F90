@@ -764,13 +764,13 @@ t_dt_rad(is:ie,js:je,1:npz) = 0. ! Ensures t_dt_rad = 0 if radiation is turned o
 !            enddo
 !         enddo
 !
-         if (is_master()) then
-            write(*,*) 't_dt_ding'
-            write(*,*) maxval(abs(t_dt_conv_ding(is:ie,js:je,:))), maxloc(abs(t_dt_conv_ding(is:ie,js:je,:)))
+!         if (is_master()) then
+!            write(*,*) 't_dt_ding'
+!            write(*,*) maxval(abs(t_dt_conv_ding(is:ie,js:je,:))), maxloc(abs(t_dt_conv_ding(is:ie,js:je,:)))
 !            write(*,*) 'Ding convection mass and enthalpy change'
 !            write(*,*) 'Enthalpy: ', maxval(abs((h_col_new(is:ie,js:je) - h_col(is:ie,js:je))/h_col(is:ie,js:je)))
 !            write(*,*) 'H2O mass: ', maxval(abs((m_col_new(is:ie,js:je)-m_col(is:ie,js:je))/m_col(is:ie,js:je)))
-         endif
+!         endif
 !
 !         h_col(is:ie,js:je) = h_col_new(is:ie,js:je)
 !         m_col(is:ie,js:je) = m_col_new(is:ie,js:je)
@@ -809,11 +809,11 @@ t_dt_rad(is:ie,js:je,1:npz) = 0. ! Ensures t_dt_rad = 0 if radiation is turned o
 !            enddo
 !        enddo
 !
-        if (is_master()) then
-           write(*,*) 'LSC mass and enthalpy change'
-           write(*,*) 'Enthalpy: ', maxval(abs((h_col_new(is:ie,js:je) - h_col(is:ie,js:je))/h_col(is:ie,js:je)))
-           write(*,*) 'H2O mass: ', maxval(abs((m_col_new(is:ie,js:je)-m_col(is:ie,js:je))/m_col(is:ie,js:je)))
-        endif
+!        if (is_master()) then
+!           write(*,*) 'LSC mass and enthalpy change'
+!           write(*,*) 'Enthalpy: ', maxval(abs((h_col_new(is:ie,js:je) - h_col(is:ie,js:je))/h_col(is:ie,js:je)))
+!           write(*,*) 'H2O mass: ', maxval(abs((m_col_new(is:ie,js:je)-m_col(is:ie,js:je))/m_col(is:ie,js:je)))
+!        endif
 !        
 !         h_col(is:ie,js:je) = h_col_new(is:ie,js:je)
 !         m_col(is:ie,js:je) = m_col_new(is:ie,js:je)

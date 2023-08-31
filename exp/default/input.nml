@@ -1,6 +1,6 @@
  &main_nml
      days = 10
-     dt_atmos = 500
+     dt_atmos = 600
      atmos_nthreads = 2
 /
 &fms_nml
@@ -10,7 +10,7 @@
 /
 
 &fv_nest_nml
-    p_split = 5
+    p_split = 6
 /
 
 &fms_io_nml
