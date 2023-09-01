@@ -1,5 +1,5 @@
  &main_nml
-     days = 3
+     days = ${run_time}
      dt_atmos = 600
      atmos_nthreads = 2
 /

@@ -11,11 +11,12 @@ Help()
   echo "--------------------------------"
   echo "-s --skip-mkmf    Skip building of Makefile and go straight to "
   echo "                  compilation of model"
+  echo "-d --days         Run time of model, in days"
   echo "-i --init-cond    Path to restart files (default empty str = cold start)"
   echo "-r --rst-time     Time, in days, of restart (default 0)"
 }
 
-TEMP=$(getopt -o s,i:,r:,h --long skip-mkmf,init-cond,rst-time,help -- "$@")
+TEMP=$(getopt -o s,d:,i:,r:,h --long skip-mkmf,days,init-cond,rst-time,help -- "$@")
 
 skip_mkmf=false
 init_cond=""
@@ -25,6 +26,7 @@ eval set -- "$TEMP"
 while true ; do
     case "$1" in
 	-s|--skip-mkmf       ) skip_mkmf=true ; shift 1;;
+	-d|--days            ) run_time="$2" ; shift 2;;
 	-i|--init-cond       ) init_cond="$2"   ; shift 2;;
 	-r|--rst-time        ) rst_time="$2"    ; shift 2;;
 	-h|--help            ) Help ; exit 1 ; shift 1 ;;
@@ -32,6 +34,7 @@ while true ; do
 	*                    ) echo "Error parsing"; exit 1 ;;
     esac
 done
+export run_time
 
 #=====================================================================================================
 # Source config -- ensure you have user_config file in this directory!
@@ -112,8 +115,8 @@ mkdir $workdir $workdir/INPUT $workdir/RESTART
 echo "fv3_home = $fv3_home" >> $workdir/tmp_template
 
 export warm_start=.false.
-if [[ -n "$init_cond" ]] ; then 
-    cp $init_cond/* $workdir/INPUT/
+if [[ -n "$init_cond" && $rst_time -ne 0 ]] ; then 
+    cp -r $init_cond/* $workdir/INPUT/
     export warm_start=.true.
 fi
 
@@ -279,8 +282,8 @@ if [[ $? != 0 ]] ; then echo "Error in vertical interpolation" ; exit ; fi
 # Move output
 #=========================================================================================
 # Get runtime
-runtime=$(grep 'days' input.nml | awk '{print $3}')
-output_dir="$output_root/$run_name/$((runtime + rst_time))"
+
+output_dir="$output_root/$run_name/$((run_time + rst_time))"
 
 if [[ -d $output_dir ]] ; then  rm -rf $output_dir ; fi
 mkdir -p $output_dir
