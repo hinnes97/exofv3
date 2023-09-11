@@ -113,14 +113,18 @@
 /
 
 &rad_coupler_nml
-    rad_scheme='ts_short_char'
-    I0  = 680.0
-    Tint = 50.0
+    rad_scheme='ts_short_char_bezier'
+    I0  = 171.25
+    Tint = 90.0
     tau_IRe0 = 500.0
     tau_Ve0  = 50.0
     n_ir = 1.0
     n_v = 1.0
     f1 = 0.5
+    kappa_sw = 1.53e-4
+    kappa_lw = 8.3e-3
+    fsw = 0.2
+    flw = 0.8
 /
 
 &fv_eta_nml
@@ -131,7 +135,7 @@
 /
 
 &initialisation_nml
-    init_type = 2
+    init_type = 5
     Ts = 800
     T_strat = 200.
     S = 680.0
@@ -140,6 +144,7 @@
     tau_lw = 5000.0
     tint =50.0
     surface_pressure = ${psurf}
+    tp_file='$net2/moist_subnep/soc-rad-conv-fort/fortran/prelim_runs/init_condition.nc'
 /
 
 &init_moisture_nml

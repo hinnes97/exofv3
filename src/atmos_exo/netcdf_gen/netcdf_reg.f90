@@ -95,6 +95,15 @@ module netcdf_reg_mod
          call register_diagnostic_field(axes,Time,"dynamics",'direct_down',&
                                         &'downward direct flux','watts/m2',id_direct_down)
 
+      case('ts_short_char_bezier')
+
+         call register_diagnostic_field(axes,Time,"dynamics",'net_F',&
+                                        &'net flux','watts/m2',id_net_F, .true.)
+         call register_diagnostic_field_2D(axes,Time,"dynamics",'olr',&
+                                        &'outgoing radiation','watts/m2',id_olr)
+         call register_diagnostic_field(axes,Time,"dynamics",'direct_down',&
+                                        &'downward direct flux','watts/m2',id_direct_down)
+
        case('ts_isothermal')
 
          call register_diagnostic_field(axes,Time,"dynamics",'net_F',&
@@ -143,13 +152,13 @@ module netcdf_reg_mod
            'temperature tendency due to ding convection', 'K/s', id_t_dt_ding)
       call register_diagnostic_field(axes, Time, "dynamics", 't_dt_lsc', &
            'temperature tendency due to large scale condensation', 'K/s', id_t_dt_lsc)
-      call register_diagnostic_field(axes, Time, "dynamics", 't_dt_raionut', &
+      call register_diagnostic_field(axes, Time, "dynamics", 't_dt_rainout', &
            'temperature tendency due to rainout (re-evaporation)', 'K/s', id_t_dt_rainout)
       call register_diagnostic_field(axes, Time, "dynamics", 'q_dt_ding', &
            'vapour tendency due to ding convection', 'kg/kg/s', id_q_dt_ding)
       call register_diagnostic_field(axes, Time, "dynamics", 'q_dt_lsc', &
            'vapour tendency due to large scale condensation', 'kg/kg/s', id_q_dt_lsc)
-      call register_diagnostic_field(axes, Time, "dynamics", 'q_dt_lsc', &
+      call register_diagnostic_field(axes, Time, "dynamics", 'q_dt_rainout', &
            'vapour tendency due to rainout (re-evaporation)', 'kg/kg/s', id_q_dt_rainout)
 
     end subroutine netcdf_reg_ding

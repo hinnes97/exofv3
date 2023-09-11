@@ -11,6 +11,7 @@ module rad_coupler_mod
    use fv_diagnostics_mod,   only: prt_maxmin
    use fv_timing_mod,        only: timing_on, timing_off
    use ts_short_char_mod,    only: ts_short_char
+   use ts_short_char_mod_Bezier, only: ts_short_char_bezier
    use ts_short_char_bg_mod, only: ts_short_char_bg
    use ts_isothermal_mod,    only: ts_isothermal
    use ts_twostream_mod,    only: ts_twostream
@@ -33,13 +34,18 @@ module rad_coupler_mod
    real    :: n_IR = 2.0
    real    :: n_V = 1.0
    real    :: f1 = 1.0
+   real    :: fsw = 1.0
+   real    :: flw = 1.0
+   real    :: kappa_lw = 1.e-2
+   real    :: kappa_sw = 1.e-4
    logical :: thick_atmosphere = .false.
    CHARACTER(LEN=32) :: star = 'Sun'
 
    integer :: n_bands = 1
    real, dimension(:), allocatable :: f_star, I_star
 
-   namelist /rad_coupler_nml/ I0, Tint, rad_scheme, tau_IRe0, tau_Ve0, n_IR, n_V, f1, star, thick_atmosphere
+   namelist /rad_coupler_nml/ I0, Tint, rad_scheme, tau_IRe0, tau_Ve0, n_IR, n_V, f1, star, thick_atmosphere, &
+                              kappa_sw, kappa_lw, flw, fsw
    namelist /n_bands_nml/ n_bands
 
 contains
@@ -117,7 +123,7 @@ contains
       integer :: i,j,k,b
       real :: PI=4.D0*DATAN(1.D0)
 
-      real, dimension(npz+1) :: tau_Ve, tau_IRe, net_F_1D, sw_down_1D
+      real, dimension(npz+1) :: tau_Ve, tau_IRe, net_F_1D, sw_down_1D, mu_z_arr
       real, dimension(npz) :: sw_a, sw_g, lw_a, lw_g
       real :: mu_z, AB, sw_a_surf, lw_a_surf, olr_1D, net_Fs_1D, I_1D
       real :: surf_lw_down_1D, surf_sw_down_1D
@@ -284,6 +290,53 @@ contains
 
                call ts_short_char(surface_on, .true.,npz, npz+1, ts(i,j), pt(i,j,1:npz), pl(i,j,1:npz), & 
                     pe(i,j,1:npz+1), tau_Ve, tau_IRe, mu_z, I_1D, Tint, AB, sw_a, sw_g, lw_a, lw_g,     &
+                    sw_a_surf, lw_a_surf, net_F_1D, olr_1D, net_Fs_1D,surf_lw_down_1D,surf_sw_down_1D,sw_down_1D)
+
+               net_F(i,j,:) = net_F_1D
+               net_Fs(i,j) = net_Fs_1D
+               olr(i,j) = olr_1D
+               surf_lw_down(i,j) = surf_lw_down_1D
+               surf_sw_down(i,j) = surf_sw_down_1D
+               direct_down(i,j,1:npz+1)  = sw_down_1D
+
+            end do
+         end do
+      case('ts_short_char_bezier')
+!$OMP parallel do default (none) firstprivate(  &
+!$OMP                           tau_IRe,tau_Ve,mu_z,mu_z_arr,sw_a,sw_g,lw_a,lw_g,sw_a_surf,lw_a_surf,&
+!$OMP                                net_F_1D, olr_1D, net_Fs_1D, surf_lw_down_1D, surf_sw_down_1D,&
+!$OMP                                sw_down_1D) &
+!$OMP     shared(js,je,is,ie,npz,tau_IRe0, tau_Ve0, n_V, n_IR, tidally_locked, I_1D, I0, surface_on, &
+!$OMP             pe, f1, ts, pt, pl, Tint, AB, &
+!$OMP              surf_lw_down, surf_sw_down, direct_down, &
+!$OMP                                   agrid,olr, net_Fs, net_F, &
+!$OMP                   kappa_lw, kappa_sw, fsw, flw)    
+         do j = js,je
+            do i = is,ie
+               tau_IRe(1) = kappa_lw*(flw + (1.-flw)*0.5*pe(i,j,1)/pe(i,j,npz+1))*pe(i,j,1)/grav
+               tau_Ve(1)  = kappa_sw*(fsw + (1.-fsw)*0.5*pe(i,j,1)/pe(i,j,npz+1))*pe(i,j,1)/grav
+               do k = 2, npz+1
+!                  tau_IRe(k) = f1*tau_IRe0 * (pe(i,j,k) / pe(i,j,npz+1)) &
+!                       + (1-f1)*tau_IRe0 * (pe(i,j,k) / pe(i,j,npz+1)) **n_IR
+!                  tau_Ve(k) = tau_Ve0 * (pe(i,j,k) / pe(i,j,npz+1)) ** n_V
+
+                  tau_IRe(k) = tau_IRe(k-1) + kappa_lw*(flw + (1.-flw)*(pl(i,j,k-1)/pe(i,j,npz+1)))*(pe(i,j,k) - pe(i,j,k-1))/grav
+                  tau_Ve(k)  =  tau_Ve(k-1) + kappa_sw*(fsw + (1.-fsw)*(pl(i,j,k-1)/pe(i,j,npz+1)))*(pe(i,j,k) - pe(i,j,k-1))/grav
+               end do
+
+               if (tidally_locked) then
+                  I_1D = I0
+                  mu_z = -cos(agrid(i,j,1))*cos(agrid(i,j,2))
+                  mu_z_arr = mu_z
+                  if (I_1D < 0) then
+                     I_1D = 0
+                  end if
+               else
+                  I_1D = I0 * cos(agrid(i,j,2))
+               end if
+
+               call ts_short_char_Bezier(.true., surface_on, npz, npz+1, ts(i,j), pt(i,j,1:npz), pl(i,j,1:npz), & 
+                    pe(i,j,1:npz+1), tau_Ve, tau_IRe, mu_z_arr, I_1D, Tint, AB, sw_a, sw_g,     &
                     sw_a_surf, lw_a_surf, net_F_1D, olr_1D, net_Fs_1D,surf_lw_down_1D,surf_sw_down_1D,sw_down_1D)
 
                net_F(i,j,:) = net_F_1D

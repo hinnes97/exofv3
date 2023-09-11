@@ -31,8 +31,8 @@ fi
 cd build
 
 # # Run configure
-# ../configure --with-mpi=yes --with-netcdf=yes --with-netcdf-fortran=yes --prefix=$install_dir ||\
-#     { echo "Configure failed"; exit $?; }
+../configure --with-mpi=yes --with-netcdf=yes --with-netcdf-fortran=yes --prefix=$install_dir ||\
+    { echo "Configure failed"; exit $?; }
 
 # Run make
 make || { echo "Error in make"; exit $?; }

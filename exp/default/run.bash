@@ -21,6 +21,7 @@ TEMP=$(getopt -o s,d:,i:,r:,h --long skip-mkmf,days,init-cond,rst-time,help -- "
 skip_mkmf=false
 init_cond=""
 rst_time=0
+run_time=2
 
 eval set -- "$TEMP"
 while true ; do
