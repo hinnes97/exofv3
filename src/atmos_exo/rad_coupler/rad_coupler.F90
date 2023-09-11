@@ -310,7 +310,7 @@ contains
 !$OMP             pe, f1, ts, pt, pl, Tint, AB, &
 !$OMP              surf_lw_down, surf_sw_down, direct_down, &
 !$OMP                                   agrid,olr, net_Fs, net_F, &
-!$OMP                   kappa_lw, kappa_sw, fsw, flw)    
+!$OMP                   kappa_lw, kappa_sw, fsw, flw, pi)    
          do j = js,je
             do i = is,ie
                tau_IRe(1) = kappa_lw*(flw + (1.-flw)*0.5*pe(i,j,1)/pe(i,j,npz+1))*pe(i,j,1)/grav
@@ -332,7 +332,9 @@ contains
                      I_1D = 0
                   end if
                else
-                  I_1D = I0 * cos(agrid(i,j,2))
+                  ! Divide by pi here so that \int_{-pi/2}^{pi/2} 2*pi*a^2 cos^2(theta) d(theta) = pi*a^2
+                  I_1D = I0/pi
+                  mu_z_arr(:) =  cos(agrid(i,j,2))
                end if
 
                call ts_short_char_Bezier(.true., surface_on, npz, npz+1, ts(i,j), pt(i,j,1:npz), pl(i,j,1:npz), & 
