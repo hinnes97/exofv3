@@ -1,12 +1,13 @@
 module ding_convection
   use phys, only : T_TP => H2O_TriplePointT, P_TP => H2O_TriplePointP, L_sub => H2O_L_sublimation, &
-       L_vap => H2O_L_vaporization_TriplePoint, CP_v => H2O_cp, CP_d => H2He_solar_cp, &
+       L_vap => H2O_L_vaporization_TriplePoint, CP_v => H2O_cp, &
        mu_d => H2He_solar_MolecularWeight, mu_v => H2O_MolecularWeight, Rstar
   use sat_props_mod, only: q_sat, q_sat_single, r_sat_single, r_sat, sat_vp, cp_liquid, hv_tp, hl_tp,&
-                           get_f_ice, mv_mvmd
+       get_f_ice, mv_mvmd
+  
 !  use tables, only : find_var_lin, lheat, hv, cpv_new, cpl_new, Ttp, find_var_simplified  use constants, only : grav, cp_vapor
   use tracer_manager_mod, only: get_tracer_index
-  use constants_mod, only: grav, rvgas, rdgas
+  use constants_mod, only: grav, rvgas, rdgas, cp_d => cp_air
   use field_manager_mod,  only: MODEL_ATMOS
   use time_manager_mod, only: time_type
   use fv_mp_mod, only: is_master
@@ -18,9 +19,9 @@ module ding_convection
 
   real :: precision = 1.e-12
   real :: max_dt = 5.0
-  integer :: n_iter_conv = 5
+  integer :: n_iter_conv = 500
   integer :: n_iter_newt = 100
-
+  real :: tolerance = 1.e-6
   integer :: iv, ic  ! Tracer indices for vapour and condensates
 
   logical:: master
@@ -67,11 +68,12 @@ contains
     !==========================================================================
     real :: T_tmp(size(p)), qv_tmp(size(p)), qc_tmp(size(p)), qi_tmp(size(p))
     
-    real :: dlnTdlnp, temp, T_lift,rho_lift,q_lift, pfact
+    real :: dlnTdlnp, temp, T_lift,rho_lift,q_lift, pfact, grads(size(p)), q_lifts(size(p))
     real :: qsats(size(p)), rhos(size(p)),  qt(size(p)),  q_cond(size(p)),&
-            T_virt(size(p)), T_virt_lift, R_lift
+            T_virt(size(p)), T_virt_lift, R_lift,T_virt_lifts(size(p)), T_lifts(size(p)), R_lifts(size(p))
     real :: R_local(size(p)), cp_local(size(p)), qsatlift, R_loaded(size(p))
     integer :: k, npz, m,n
+    logical ::conv, check
 
     !write(*,*) 'BEGINNING OF DING ADJUST'
     !write(*,*) maxval(q(:,iv)), maxval(q(:,ic)), iv, ic
@@ -102,8 +104,13 @@ contains
     qc_tmp = q_liq!qc_tmp = q(:,ic)
     qi_tmp = q_ice
     q_cond = q_liq + q_ice
-    
-    do n=1,N_iter_conv
+
+    conv = .false.
+    n= 1
+
+    check = .true.
+    do while (n < N_iter_conv+1 .and. check)
+       check  = .false.
        ! Find saturation vapour specific humidity
        call q_sat(p,T_tmp,q_cond,qsats)
 
@@ -122,32 +129,61 @@ contains
           T_lift = T_tmp(k+1)*pfact
 
           call q_sat_single(p(k), T_lift, qi_tmp(k+1) + qc_tmp(k+1), qsatlift)
-          ! If saturated, gradient should be moist gradient
-          if (qv_tmp(k+1) .gt. 0.90*qsats(k+1) .or. qv_tmp(k+1) .gt. 0.9*qsatlift) then
-             if (qsats(k+1) .lt. 0) then
+! If saturated, gradient should be moist gradient
+!          if (is_master() .and. omp_get_thread_num().eq. 0)  then
+!             write(*,*) k, p(k) ,qsats(k), qsatlift
+!             write(*,*) 'qv_tmp(k)', qv_tmp(k)
+!             write(*,*) 'qsats(k)', qsats(k)
+!             write(*,*) 'qsatlift', qsatlift
+!             write(*,*) k, qv_tmp(k)/qsats(k)
+!             write(*,*) T(k)
+!             call sat_vp(T(k), temp)
+!             write(*,*) temp, p(k)
+!             conv = .true.
+!          endif
+          if ((qv_tmp(k+1) .gt. qsats(k+1)  .or. qv_tmp(k) .gt. qsats(k)) .and.&
+               (qsatlift < 1.e19 .and. qsats(k+1) < 1.e19 .and. qsats(k) < 1.e19)) then
+                       if (qsats(k+1) .lt. 0) then
                 write(*,*) 'QSATS<0', qsats(k+1)
              endif
              
              ! get moist gradient
              call gradient(p(k+1), T_tmp(k+1), dlnTdlnp,temp)
-
+             grads(k+1) = dlnTdlnp
              ! Calculate lifted temperature from adiabatic expansion
              pfact = exp(dlnTdlnp*log(p(k)/p(k+1)))
              T_lift = T_tmp(k+1)*pfact
-             
+             T_lifts(k) = T_lift
              ! Calculate q here as proportion of gas phase rv/(1+rv)
              call r_sat_single(p(k), T_lift, q_lift)
              q_lift = q_lift/(1 + q_lift)
+             q_lifts(k) = q_lift
+             !call q_sat_single(p(k), T_lift, 0.0, q_lift)
              R_lift = Rstar*(q_lift/mu_v + (1. - q_lift)/mu_d)
-
+             R_lifts(k) = R_lift
              T_virt_lift = T_lift * R_lift/rdgas
-             if (T_virt_lift .gt. T_virt(k) .and. k .gt. 10) then
-
-                ! Routine does pairwise moist adjustment
+             T_virt_lifts(k) = T_virt_lift
+!             if (is_master() .and. omp_get_thread_num() .eq. 0) then
+!                write(*,*) 'IN CONVECTION'
+!                   write(*,*) k, T_virt(k), T_virt_lift
+!                   write(*,*) k, T_tmp(k), T_lift
+!                   conv = .true.
+!             endif
+             
+             if (T_virt_lift .gt. T_virt(k)*(1 + tolerance)) then
+                check = .true.
+! Routine does pairwise moist adjustment
+                !if (is_master() .and. omp_get_thread_num().eq. 0)  write(*,*) 'moist conv, k', k
                 call conserve_moist_enthalpy(p(k), p(k+1), T_tmp(k), T_tmp(k+1), qv_tmp(k), qv_tmp(k+1), &
                      delp(k), delp(k+1), qc_tmp(k), qc_tmp(k+1), qi_tmp(k), qi_tmp(k+1))
                 
 ! Recalculate the new rho, qsat etc
+!                if (is_master() .and. omp_get_thread_num().eq. 0)  then
+!                   write(*,*) 'CONVECTION', n
+!                   call gradient(p(k+1), T_tmp(k+1), dlnTdlnp)
+!                   write(*,*) k, dlnTdlnp, (log(T_tmp(k+1)) - log(T_Tmp(k)))/(log(p(k+1)) - log(p(k)))
+!                   conv = .true.
+!                endif
                 do m=k,k+1
                    R_local(m) = Rstar*(qv_tmp(m)/mu_v/(1 - qc_tmp(m) - qi_tmp(m)) + &
                         (1 - qv_tmp(m) - qi_tmp(m) - qc_tmp(m))/(1 - qc_tmp(m) - qi_tmp(m))/mu_d)
@@ -158,6 +194,7 @@ contains
                         cp_liquid*qc_tmp(m) + cp_v*qi_tmp(m)
                    q_cond(m) = qi_tmp(m) + qc_tmp(m)
                    call q_sat_single(p(m), T_Tmp(m), q_cond(m), qsats(m))
+
                 enddo
              endif
              
@@ -170,11 +207,20 @@ contains
 
              T_virt_lift = T_lift*R_local(k+1)/rdgas
              rho_lift = p(k)/T_lift/R_local(k+1)
-             
-             if (T_virt_lift .gt. T_virt(k)) then
+!             if (is_master() .and. omp_get_thread_num() .eq. 0) then
+!                if (k==35) then
+!                   write(*,*) 'BEFORE'
+!                   write(*,*) T(k), T_lift, T_virt(k), T_virt_lift
+!                endif
+!             endif
+
+             if (T_virt_lift .gt. T_virt(k)*(1 + tolerance)) then
+                check = .true.
+                !if (is_master() .and. omp_get_thread_num() .eq. 0) write(*,*) 'k, dry', k
                 call conserve_dry_enthalpy(p(k), p(k+1), T_tmp(k), T_tmp(k+1), qv_tmp(k), qv_tmp(k+1), &
                      delp(k), delp(k+1), qc_tmp(k), qc_tmp(k+1), qi_tmp(k), qi_tmp(k+1))
 !
+
 ! Recalculate rhos
                 do m=k,k+1
                    R_loaded(m) = Rstar*(qv_tmp(m)/mu_v + &
@@ -187,14 +233,188 @@ contains
                    q_cond(m) = qi_tmp(m) + qc_tmp(m)
                    call q_sat_single(p(m), T_Tmp(m), q_cond(m), qsats(m))
                 enddo
+!                if (is_master() .and. omp_get_thread_num() .eq. 0) then
+!                   if (k==35) then
+!                   dlnTdlnp = R_loaded(k+1)/cp_local(k+1)
+!                   pfact = exp(dlnTdlnp*log(p(k)/p(k+1)))
+!                   T_lift = T_tmp(k+1)*pfact
+!                   T_virt_lift = T_lift*R_local(k+1)/rdgas
+!                   rho_lift = p(k)/T_lift/R_local(k+1)
+!                   write(*,*) 'AFTER', T_lift, T_tmp(k)
+!                endif
+!                endif
+
              endif
           endif ! if (q(k+1) .gt. qsats(k+1))
 
        enddo ! do k=npz-1,1,-1
 
+       
+       do k=1,npz-1
 
+          ! Do dry lift to check for condensation
+          dlnTdlnp = R_local(k+1)/cp_local(k+1)
+          pfact = exp(dlnTdlnp*log(p(k)/p(k+1)))
+          T_lift = T_tmp(k+1)*pfact
+
+          call q_sat_single(p(k), T_lift, qi_tmp(k+1) + qc_tmp(k+1), qsatlift)
+! If saturated, gradient should be moist gradient
+!          if (is_master() .and. omp_get_thread_num().eq. 0)  then
+!             write(*,*) k, p(k) ,qsats(k), qsatlift
+!             write(*,*) 'qv_tmp(k)', qv_tmp(k)
+!             write(*,*) 'qsats(k)', qsats(k)
+!             write(*,*) 'qsatlift', qsatlift
+!             write(*,*) k, qv_tmp(k)/qsats(k)
+!             write(*,*) T(k)
+!             call sat_vp(T(k), temp)
+!             write(*,*) temp, p(k)
+!             conv = .true.
+!          endif
+
+          if ((qv_tmp(k+1) .gt. qsats(k+1) .or. qv_tmp(k) .gt. qsats(k)) .and.&
+               (qsatlift < 1.e19 .and. qsats(k+1) < 1.e19 .and. qsats(k) .lt. 1.e19)) then
+             if (qsats(k+1) .lt. 0) then
+                write(*,*) 'QSATS<0', qsats(k+1)
+             endif
+             
+             ! get moist gradient
+             call gradient(p(k+1), T_tmp(k+1), dlnTdlnp,temp)
+             grads(k+1) = dlnTdlnp
+             ! Calculate lifted temperature from adiabatic expansion
+             pfact = exp(dlnTdlnp*log(p(k)/p(k+1)))
+             T_lift = T_tmp(k+1)*pfact
+             T_lifts(k) = T_lift
+             ! Calculate q here as proportion of gas phase rv/(1+rv)
+             call r_sat_single(p(k), T_lift, q_lift)
+             q_lift = q_lift/(1 + q_lift)
+             q_lifts(k) = q_lift
+             !call q_sat_single(p(k), T_lift, 0.0, q_lift)
+             R_lift = Rstar*(q_lift/mu_v + (1. - q_lift)/mu_d)
+             R_lifts(k) = R_lift
+             T_virt_lift = T_lift * R_lift/rdgas
+             T_virt_lifts(k) = T_virt_lift
+!             if (is_master() .and. omp_get_thread_num() .eq. 0) then
+!                write(*,*) 'IN CONVECTION'
+!                   write(*,*) k, T_virt(k), T_virt_lift
+!                   write(*,*) k, T_tmp(k), T_lift
+!                   conv = .true.
+!             endif
+             
+             if (T_virt_lift .gt. T_virt(k)*(1 + tolerance)) then
+                check = .true.
+! Routine does pairwise moist adjustment
+               ! if (is_master() .and. omp_get_thread_num().eq. 0)  write(*,*) 'moist conv, k', k, n
+                call conserve_moist_enthalpy(p(k), p(k+1), T_tmp(k), T_tmp(k+1), qv_tmp(k), qv_tmp(k+1), &
+                     delp(k), delp(k+1), qc_tmp(k), qc_tmp(k+1), qi_tmp(k), qi_tmp(k+1))
+                
+! Recalculate the new rho, qsat etc
+!                if (is_master() .and. omp_get_thread_num().eq. 0)  then
+!                   write(*,*) 'CONVECTION', n
+!                   call gradient(p(k+1), T_tmp(k+1), dlnTdlnp)
+!                   write(*,*) k, dlnTdlnp, (log(T_tmp(k+1)) - log(T_Tmp(k)))/(log(p(k+1)) - log(p(k)))
+!                   conv = .true.
+!                endif
+                do m=k,k+1
+                   R_local(m) = Rstar*(qv_tmp(m)/mu_v/(1 - qc_tmp(m) - qi_tmp(m)) + &
+                        (1 - qv_tmp(m) - qi_tmp(m) - qc_tmp(m))/(1 - qc_tmp(m) - qi_tmp(m))/mu_d)
+                   R_loaded(m) = R_local(m)*(1 - qc_tmp(m) - qi_tmp(m))
+                   rhos(m) = p(m)/R_local(m)/T(m)
+                   T_virt(m) = T_tmp(m) * R_local(m) / rdgas
+                   cp_local(m) = cp_d*(1-qv_tmp(m)-qc_tmp(m)-qi_tmp(m)) + cp_v*qv_tmp(m) + &
+                        cp_liquid*qc_tmp(m) + cp_v*qi_tmp(m)
+                   q_cond(m) = qi_tmp(m) + qc_tmp(m)
+                   call q_sat_single(p(m), T_Tmp(m), q_cond(m), qsats(m))
+
+                enddo
+             endif
+             
+          else
+
+             ! Do dry expansion with value of R_local
+             dlnTdlnp = R_loaded(k+1)/cp_local(k+1)
+            pfact = exp(dlnTdlnp*log(p(k)/p(k+1)))
+            T_lift = T_tmp(k+1)*pfact
+
+             T_virt_lift = T_lift*R_local(k+1)/rdgas
+             rho_lift = p(k)/T_lift/R_local(k+1)
+!             if (is_master() .and. omp_get_thread_num() .eq. 0) then
+!                if (k==35) then
+!                   write(*,*) 'BEFORE'
+!                   write(*,*) T(k), T_lift, T_virt(k), T_virt_lift
+!                endif
+!             endif
+
+             if (T_virt_lift .gt. T_virt(k)*(1 + tolerance)) then
+                check = .true.
+                
+                !if (is_master() .and. omp_get_thread_num() .eq. 0) write(*,*) 'k, dry', k, n
+                call conserve_dry_enthalpy(p(k), p(k+1), T_tmp(k), T_tmp(k+1), qv_tmp(k), qv_tmp(k+1), &
+                     delp(k), delp(k+1), qc_tmp(k), qc_tmp(k+1), qi_tmp(k), qi_tmp(k+1))
+!
+
+! Recalculate rhos
+                do m=k,k+1
+                   R_loaded(m) = Rstar*(qv_tmp(m)/mu_v + &
+                        (1. - qv_tmp(m) - qi_tmp(m) - qc_tmp(m))/mu_d)
+                   R_local(m) = R_loaded(m)/(1. - qc_tmp(m) - qi_tmp(m))
+                   rhos(m) = p(m)/R_local(m)/T(m)
+                   T_virt(m) = T_tmp(m)*R_loaded(m)/rdgas
+                   cp_local(m) = cp_d*(1-qv_tmp(m)-qc_tmp(m)-qi_tmp(m)) + cp_v*qv_tmp(m) + &
+                        cp_liquid*qc_tmp(m) + cp_v*qi_tmp(m)
+                   q_cond(m) = qi_tmp(m) + qc_tmp(m)
+                   call q_sat_single(p(m), T_Tmp(m), q_cond(m), qsats(m))
+                enddo
+!                if (is_master() .and. omp_get_thread_num() .eq. 0) then
+!                   if (k==35) then
+!                   dlnTdlnp = R_loaded(k+1)/cp_local(k+1)
+!                   pfact = exp(dlnTdlnp*log(p(k)/p(k+1)))
+!                   T_lift = T_tmp(k+1)*pfact
+!                   T_virt_lift = T_lift*R_local(k+1)/rdgas
+!                   rho_lift = p(k)/T_lift/R_local(k+1)
+!                   write(*,*) 'AFTER', T_lift, T_tmp(k)
+!                endif
+!                endif
+
+             endif
+          endif ! if (q(k+1) .gt. qsats(k+1))
+
+       enddo ! do k=npz-1,1,-1
+
+       n = n+1
     enddo ! do n=1,N_iter
 
+    !if (is_master() .and. omp_get_threaD_num() .eq. 0) write (*,*) 'n', n
+!    if (is_master().and. omp_get_thread_num() .eq. 0 .and. n .gt. 3) then
+!       do k=1,npz-1
+!          write(*,*) '-----------------------------------------------------'
+!          write(*,*) k, p(k), T_tmp(k)
+!          write(*,*) 'q', qv_tmp(k)
+!          write(*,*) 'theory grad', grads(k+1)
+!          write(*,*) 'real_grad', (log(T_tmp(k+1)) - log(T_Tmp(k)))/(log(p(k+1)) - log(p(k))), (log(T_virt(k+1)) - log(T_virt(k)))/(log(p(k+1)) - log(p(k)))
+!          write(*,*) 'Tlift', T_tmp(k+1)*(p(k)/p(k+1))**(grads(k+1)), T_lifts(k)
+!          write(*,*) "T virt", T_virt(k)
+!          write(*,*)  'T_virt_lift', T_tmp(k+1)*(p(k)/p(k+1))**(grads(k+1))*(q_lifts(k)*rvgas/rdgas + (1-q_lifts(k))), T_lifts(k)*(q_lifts(k)*rvgas/rdgas + (1-q_lifts(k)))
+!          write(*,*) 'R_lift', R_lifts(k), (q_lifts(k)*rvgas + (1-q_lifts(k))*rdgas)
+!          write(*,*) 'T_virt_lifts(k)', T_virt_lifts(k)
+!          write(*,*) 'Relative hum', qv_tmp(k)/qsats(k)
+!          call gradient(p(k), T_tmp(k), grads(k), temp)
+!          write(*,*) 'qcrit', 1/temp/(1. - mu_d/mu_v)
+!          write(*,*) '-----------------------------------------------------'
+!       enddo
+       
+!    endif
+    
+!    if (is_master() .and. omp_get_thread_num().eq. 0)  then
+!       do k=1,npz
+!          !dlnTdlnp = R_loaded(k+1)/cp_local(k+1)
+!          call gradient(p(k+1), T_tmp(k+1), dlnTdlnp)
+!          write(*,*) k, dlnTdlnp, (log(T_tmp(k+1)) - log(T_Tmp(k)))/(log(p(k+1)) - log(p(k))), R_loaded(k+1)/cp_local(k+1)
+!          write(*,*) qv_tmp(k), qsats(k), q_cond(k)
+!       
+!    enddo
+! endif
+
+       
     t_dt_ding = T_tmp - T
     q_dt_ding(:) = qv_tmp - q(:,iv)
     q_ice = qi_tmp
@@ -384,9 +604,9 @@ contains
     !==========================================================================    
     real :: k_old, T2_guess,  q1_new, q2_new, k_new
 
-    real :: k_diff, dT, T1_new
+    real :: k_diff, dT, T1_new, grad
     real :: k1_old, k2_old,mq_old, mq_new, qt_10, qt_20
-    real :: qc_1_new, qc_2_new, qi_1_new, qi_2_new
+    real :: qc_1_new, qc_2_new, qi_1_new, qi_2_new, out, tvirt2, tvirt1,tvirtlift, tlift, qlift, qsat1,qsat2
     integer :: n
 
     ! Calculate moist enthalpy of old state
@@ -415,13 +635,28 @@ contains
 
        !write(*,*) 'IN CONSMOISTENTH', T1,T2,T1_new, T2_guess, qi_1_new, qi_2_new
        dT = (k_new - k_old)/k_diff
-       !dT = min(dT, 5.)
-       !dT = max(dT, -5.)
+       dT = min(dT, 5.)
+       dT = max(dT, -5.)
        T2_guess = T2_guess  - 0.5*dT
 
        n = n+1
+
+       if (T1 .ne. T1 .or. T2 .ne. T2 .or. T1_new .ne. T1_new .or. T2_guess .ne. T2_guess) then
+          write(*,*) 'NAN', T1, T2, T1_new, T2_guess
+          write(*,*) dT, k_new, k_old, k_diff
+       endif
+       
        if (n .gt. n_iter_newt-5) then
-          write(*,*) 'NEAR MAX NEWT, dT, T2guess, T1, T2', dT, T2_guess, T1, T2
+          write(*,*) 'NEAR MAX NEWT, dT, T2guess, T1, T2', 0.5*dT, T2_guess, T1, T2
+          write(*,*) q1, q2, qi_1, qi_2
+          call q_sat_single(p1, T1, qi_1 + qc_1, out)
+          write(*,*) 'qsat1', out
+          call sat_vp(T1, out)
+          write(*,*) 'psat1, p1', out, p1
+          call q_sat_single(p2, T2, qi_2 + qc_2, out)
+          write(*,*) 'qsat2', out
+          call sat_vp(T2, out)
+          write(*,*) 'psat2, p2', out, p2
        endif
        
        if (n .eq. n_iter_newt-1) then
@@ -432,7 +667,7 @@ contains
     enddo
     
     call k_adj(T2_guess, p1, p2, dp1, dp2, qt_10,qt_20,q1_new, q2_new, &
-         qc_1_new, qc_2_new, qi_1_new, qi_2_new, T1_new, k_new)
+         qc_1_new, qc_2_new, qi_1_new, qi_2_new, T1_new, k_new, .true.)
     if (abs(dT) .gt. precision) then
        write(*,*) 'MAX newton, MOIST', T1, T2
        return
@@ -440,6 +675,7 @@ contains
 
     if (q1_new .lt. 0. .or. q2_new .lt. 0) then
        write(*,*) 'LESS THAN 0', q1_new, q2_new, q1, q2
+       write(*,*) T1, T2,T1_new, T2_guess
     endif
     
     q1 = q1_new
@@ -454,13 +690,30 @@ contains
     
     mq_new = (q1 +qc_1 + qi_1)*dp1 + (q2 +qc_2+qi_2)*dp2
 
+!    if (is_master() .and. omp_get_thread_num() .eq. 0) then
+!       call gradient(p2, T2_guess, grad)
+!       write(*,*) 'grad, dlntdlnp', grad, (log(T2) - log(T1))/(log(p2) - log(p1))
+!       tvirt2 = T2*(rvgas*q2 + (1 - q2)*rdgas)/rdgas
+!       tvirt1 = T1*(rvgas*q1 + (1 - q1)*rdgas)/rdgas
+!       tlift = T2*exp(grad*log(p1/p2))
+!       call r_sat_single(p1, tlift, qlift)
+!       qlift = qlift/(1 + qlift)
+!       tvirtlift = tlift*(1. + (rvgas/rdgas - 1)*qlift)
+!       write(*,*) 'T2, T1', t2, t1
+!       write(*,*) 'tvirt2, tvirt1', tvirt2,tvirt1
+!       write(*,*) 'tlift, tvirtlift', tlift, tvirtlift
+!       call q_sat_single(p1, T1, qi_1 + qc_1, qsat1)
+!       call q_sat_single(p1, T2, qi_2 + qc_2, qsat2)
+!       write(*,*) 'RH1, RH2', q1/qsat1, q2/qsat2
+!       write(*,*) 'q2, qlift', q2, qlift, q2/qlift
+!    endif
   end subroutine conserve_moist_enthalpy
 
   subroutine k_adj(T2_guess, p1, p2, dp1, dp2, q1_0,q2_0,qv_1,qv_2,&
-       qc_1, qc_2,qi_1, qi_2, T1_new,k_new)
+       qc_1, qc_2,qi_1, qi_2, T1_new,k_new, printme)
     real, intent(in):: T2_guess, p1, p2, dp1, dp2, q1_0,q2_0
     real, intent(out) ::  qc_1, qc_2, k_new, T1_new,qv_1, qv_2, qi_1, qi_2
-
+    logical, intent(in), optional :: printme
 
     real :: dlnTdlnp, rc_1, rc_2, rv_1, rv_2
     real :: k1, k2, eta, f1, pfact, f_ice, m_i
@@ -484,7 +737,9 @@ contains
     rc_2 = (m_i*(1 + rv_2) - dp2*rv_2 - dp1*rv_1/eta)/(dp1 + dp2 - m_i)
 
     if (rc_2 .lt. 0) then
-       !write(*,*) 'NOT ENOUGH VAP FOR CONDENSATE'
+!       if (present(printme)) then
+!          if (printme .and. is_master() .and. omp_get_thread_num() .eq. 0) write(*,*) 'NOT ENOUGH VAP FOR CONDENSATE'
+!       endif
        ! Condensate is negative (not enough initial mass of water)
        qv_1 = rv_1/(1 + rv_1)
        qv_2 = rv_2/(1 + rv_2)
@@ -526,6 +781,11 @@ contains
 
     k_new = k1*dp1 + k2*dp2
 
+    if (k_new .ne. k_new) then
+       write(*,*) 'NAN', T2_guess, T1_new, qv_1, qv_2, qc_1, qc_2
+       write(*,*) k1, k2, rv_1, rv_2, dlnTdlnp
+    endif
+    
   end subroutine k_adj
 
     
@@ -633,6 +893,7 @@ contains
                 write(*,*)  q_guess, qi_tmp(k), k
                 write(*,*) 'T_guess, qsat, qv_tmp(k)'
                 write(*,*) T_guess, qsat, qv_tmp(k)
+                write(*,*) qv(k), qsat
                 stop
              endif
              
@@ -716,17 +977,19 @@ contains
    kout = h_d + h_v + h_i + h_l
   end subroutine calc_enthalpy_mass
   
-  subroutine rain_out_revap(T, p, delp, qv, ql, qi, q_dt_rainout, dT)
+  subroutine rain_out_revap(T, p, delp, qv, ql, qi, q_dt_rainout, dT, ua, va, du,dv)
     real, intent(in) :: T(:), p(:), delp(:), qv(:)
     real, intent(inout) :: q_dt_rainout(:), ql(:), qi(:)
     real, intent(out) :: dT(:)
+    real, intent(in) :: ua(:), va(:)
+    real, intent(inout) :: du(:), dv(:)
     real, dimension(size(p)) :: ql_tmp, qi_tmp, T_tmp, qv_tmp
     real :: small, T_cond, satq, delT, T_guess, Tgp, Tgm
     real :: h0, hcond, hgas, hnew, hp, hm, diff, md, mv, mv_new, m_cond
     real:: fi
     
-    real, dimension(size(p)) :: m_ds, m_vs, m_ls, m_is, delqi, delql, delqv
-    
+    real, dimension(size(p)) :: m_ds, m_vs, m_ls, m_is, delqi, delql, delqv, umom, vmom
+    real :: umom_tot, umom_aft
     integer :: npz, k, l,n, m
     
     logical :: l_evap
@@ -750,7 +1013,12 @@ contains
 
     l_evap = .false.
     
-
+!    if (is_master() .and. omp_get_thread_num() .eq. 0) then
+!       write(*,*) 'REVAP'
+!       do k=1,npz
+!          write(*,*) k, ql_tmp(k), qi_tmp(k)
+!       enddo
+!    endif
 !!$ =====================================================================================
 !!$ Uncomment for enthalpy diagnostics
 !!$ =====================================================================================    
@@ -778,6 +1046,13 @@ contains
     delqv = 0.0
     delql = 0.0
     delqi = 0.0
+    umom = 0.0
+    vmom = 0.0
+    umom_tot = 0.0
+    do k=1,npz
+       umom_tot = umom_tot + delp(k)*ua(k)
+    enddo
+    
     do k=1,npz
        ! From top down, check if there is condensate in the layer. Then search for the next
        ! undersaturated layer at < 90% RH (Xianyu Tan Pure steam conv. paper)
@@ -862,6 +1137,11 @@ contains
                       m_vs(l) = m_vs(l) + m_cond
                       q_dt_rainout(l) = qv_tmp(l) - qv(l)
 
+                      umom(l) = umom(l) + m_cond*ua(k)
+                      vmom(l) = vmom(l) + m_cond*va(k)
+
+                      umom(k) = umom(k) - m_cond*ua(k)
+                      
                       m_is(k) = 0.0
                       m_ls(k) = 0.0
 
@@ -1023,6 +1303,16 @@ contains
        
     enddo
 
+! Update momentum! Will this cause error if layer is both rained out of and re-evaporated into? Don't think it's possible
+    do k=1,npz
+       du(k) = (ua(k) + umom(k)/delp(k))/(1. + delqv(k) + delql(k) + delqi(k)) - ua(k)
+       dv(k) = (va(k) + vmom(k)/delp(k))/(1. + delqv(k) + delql(k) + delqi(k)) - va(k)
+    enddo
+    umom_aft = 0.0
+    do k=1,npz
+       umom_aft = umom_aft + (ua(k) + du(k))*delp(k)*(1 + delqv(k)  + delqi(k) + delql(k))
+    enddo
+    
     ! ========================================================
     ! Uncomment for enthalpy diagnostics
 !    if (is_master() ) then
@@ -1126,7 +1416,7 @@ contains
     call get_f_ice(T, f_ice)
 
     L = L_sub*f_ice + (hv_tp - hl_tp + (cp_v-cp_liquid)*(T-T_tp))*(1-f_ice)
-    
+    !L = hv_tp - hl_tp
 
     call r_sat_single(p,T,rsat)
     qsat = rsat/(1 + rsat)

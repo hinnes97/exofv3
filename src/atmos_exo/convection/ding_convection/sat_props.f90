@@ -1,18 +1,20 @@
 module sat_props_mod
   use phys, only : T_TP => H2O_TriplePointT, P_TP => H2O_TriplePointP, L_sub => H2O_L_sublimation, &
        cp_v => H2O_cp, mu_d => H2He_solar_MolecularWeight, &
-       mu_v => H2O_MolecularWeight
+       mu_v => H2O_MolecularWeight, Tcrit => H2O_CriticalPointT, Pcrit => H2O_CriticalPointP
 
   use constants_mod, only: rvgas
   implicit none
 
   ! Some physical constants for water
   real, parameter :: cp_liquid = 4219.9 ! Specific heat capacity of liquid water at TP [J/kg]
+  !real, parameter :: cp_liquid = cp_v
   real, parameter :: hv_tp = 2500920.   ! Specific enthalpy of water vapour at triple point
   real, parameter :: hl_tp = 1.0000000  ! Specific enthalpy of liquid water at the triple point
 
   real, parameter :: eps = mu_v/mu_d
   real, parameter :: T_low = T_tp - 20.0
+
 contains
 
   subroutine get_xh2o(q_h2o, q_cond, x_h2o)
@@ -30,19 +32,26 @@ contains
 
     real :: L0, log_p_p0, f_ice, sat_p_l, sat_p_i
 
-    call get_f_ice(T, f_ice)
-    
-    ! Over vapour
-    L0 = hv_tp - hl_tp
-    log_p_p0 = (1./T- 1./T_TP)*((cp_v - cp_liquid)*T_TP - L0)/rvgas + (cp_v-cp_liquid)/rvgas*log(T/T_TP)
-    sat_p_l = exp(log_p_p0)*P_TP
+    if (T<Tcrit) then
+       call get_f_ice(T, f_ice)
 
-    ! Over ice
-    L0 = L_sub
-    sat_p_i = p_tp*exp(-L0/rvgas * (1./T - 1./T_tp) )
+ ! Over vapour
+       L0 = hv_tp - hl_tp
+       log_p_p0 = (1./T- 1./T_TP)*((cp_v - cp_liquid)*T_TP - L0)/rvgas + (cp_v-cp_liquid)/rvgas*log(T/T_TP)
+       sat_p_l = exp(log_p_p0)*P_TP
 
-    
-    sat_p = sat_p_i*f_ice + sat_p_l*(1-f_ice)
+ ! Over ice
+       L0 = L_sub
+       sat_p_i = p_tp*exp(-L0/rvgas * (1./T - 1./T_tp) )
+
+
+       sat_p = sat_p_i*f_ice + sat_p_l*(1-f_ice)
+!       L0 = hv_tp - hl_tp
+!       sat_p = p_tp*exp(-L0/rvgas * (1./T - 1./T_tp))
+    else
+       ! Make sat_p really high
+       sat_p = 1.e20
+    endif
 
   end subroutine sat_vp
 
@@ -84,7 +93,19 @@ contains
     
     call sat_vp(T, psat)
 
-    q = (1 - qc) * eps* (psat/p)/(1 + (eps-1)*(psat/p))
+! If we are psat>p or T>Tcrit, then make
+! Saturation value huge, which avoids us ever making the mistake
+! of thinking that this is saturated!
+
+! Especially important when mu_d>mu_v because then we can get situations
+! where q_sat<0, and any q>q_sat which is dangerous!
+    
+    if (psat > p .or. T > Tcrit) then
+       q = 1.e20
+    else
+       q = (1 - qc) * eps* (psat/p)/(1 + (eps-1)*(psat/p))
+    endif
+    
   end subroutine q_sat_single
 
   subroutine mv_mvmd(p, T, val)
@@ -138,6 +159,8 @@ contains
     else
        f_ice = 0.0
     endif
+
+!    f_ice = 1.0
   end subroutine get_f_ice
 
 end module sat_props_mod

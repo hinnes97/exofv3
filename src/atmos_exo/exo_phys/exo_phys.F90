@@ -68,7 +68,8 @@ module exo_phys_mod
                                   id_opr_VIS1, id_opr_VIS2, id_cff, id_scff, id_direct_down, id_t_dt_rad,&
                                   id_t_dt_conv, id_t_dt_conv_moist, id_height, id_isr, id_surf_sw_down,&
                                   id_surf_lw_down, id_flux_t, id_t_dt_ding, id_t_dt_lsc, id_t_dt_rainout, &
-                                  id_q_dt_ding, id_q_dt_rainout, id_q_dt_lsc
+                                  id_q_dt_ding, id_q_dt_rainout, id_q_dt_lsc, id_lw_dn, id_lw_up, &
+                                  id_sw_dn
 
 
    use         surface_flux_mod, only: surface_flux
@@ -205,6 +206,7 @@ contains
       real :: q_dt_ding_vap(is:ie,js:je,npz)
       real :: q_dt_lsc(is:ie,js:je,npz), q_dt_rainout(is:ie,js:je,npz)
       real :: t_dt_lsc(is:ie,js:je,npz), t_dt_rainout(is:ie,js:je,npz)
+      real :: du_rainout(is:ie,js:je,npz), dv_rainout(is:ie,js:je,npz)
       
       ! Create these arrays locally because will be rained out immediately
       real :: q_ice(is:ie,js:je,npz)
@@ -230,6 +232,8 @@ contains
       real   :: cff(is:ie,js:je,1:npz)
       real   :: scff(is:ie,js:je)
       real   :: direct_down(is:ie,js:je,1:npz+1)
+      real   :: lw_dn(is:ie,js:je,1:npz+1)
+      real   :: lw_up(is:ie,js:je,1:npz+1)
       real   :: surf_lw_down(is:ie,js:je)
       real   :: surf_sw_down(is:ie,js:je)
       integer :: i,j,k
@@ -357,8 +361,9 @@ vap = get_tracer_index(MODEL_ATMOS, 'vapour')
       !-----------------------------------------------------------------------------------------------
 
 t_dt_rad(is:ie,js:je,1:npz) = 0. ! Ensures t_dt_rad = 0 if radiation is turned off
-      if (rsc == r_split) then
-!$OMP parallel do default(none) shared(js,je,is,ie,npz,p_mid,delp,pe,p_edge)      
+if (rsc == r_split) then
+   vap = get_tracer_index(MODEL_ATMOS, 'vapour')
+!$OMP parallel do default(none) shared(js,je,is,ie,npz,p_mid,delp,pe,p_edge, q, vap)
          do j = js,je
             do i = is,ie
                do k = 1, npz
@@ -373,7 +378,7 @@ t_dt_rad(is:ie,js:je,1:npz) = 0. ! Ensures t_dt_rad = 0 if radiation is turned o
 
          call rad_coupler(surface_on, tidally_locked, is, ie, js, je, npz, ng, ts(is:ie,js:je), pt(is:ie,js:je,1:npz), p_mid(is:ie,js:je,1:npz), &
               p_edge(is:ie,js:je,1:npz+1), agrid(is:ie,js:je,1:2), net_F, olr, opr_IR, opr_W1, opr_W2, opr_UV, opr_VIS1, opr_VIS2, net_Fs,&
-              surf_lw_down(is:ie,js:je), surf_sw_down(is:ie,js:je), cff, scff, direct_down)
+              surf_lw_down(is:ie,js:je), surf_sw_down(is:ie,js:je), cff, scff, direct_down, lw_dn, lw_up)
 
          if (non_dilute) then
             vap = get_tracer_index(MODEL_ATMOS, 'vapour')
@@ -821,12 +826,14 @@ t_dt_rad(is:ie,js:je,1:npz) = 0. ! Ensures t_dt_rad = 0 if radiation is turned o
 !
 
 !$OMP parallel do default(none) shared(is,ie,js,je,pt,t_dt_conv_ding,t_dt_lsc,p_mid,delp,q,vap,q_liq, &
-!$OMP                               q_ice, q_dt_ding_vap, t_dt_rainout, q_dt_rainout, q_dt_lsc)  
+!$OMP                               q_ice, q_dt_ding_vap, t_dt_rainout, q_dt_rainout, q_dt_lsc, ua, va, &
+!$OMP         du_rainout, dv_rainout)  
          do j=js,je
             do i=is,ie
                call rain_out_revap(pt(i,j,:) + t_dt_conv_ding(i,j,:) + t_dt_lsc(i,j,:), &
                     p_mid(i,j,:), delp(i,j,:), q(i,j,:,vap) + q_dt_ding_vap(i,j,:) + q_dt_lsc(i,j,:), &
-                    q_liq(i,j,:), q_ice(i,j,:), q_dt_rainout(i,j,:), t_dt_rainout(i,j,:))
+                    q_liq(i,j,:), q_ice(i,j,:), q_dt_rainout(i,j,:), t_dt_rainout(i,j,:), ua(i,j,:), va(i,j,:),&
+                    du_rainout(i,j,:), dv_rainout(i,j,:))
 
             enddo
          enddo
@@ -923,7 +930,8 @@ t_dt_rad(is:ie,js:je,1:npz) = 0. ! Ensures t_dt_rad = 0 if radiation is turned o
 
 !$OMP parallel do default(none) shared(is,ie,js,je,npz,nq,t_dt,t_dt_rad,t_dt_conv,&
 !$OMP                                  t_dt_conv_moist, t_dt_diff,t_dt_conv_ding,t_dt_lsc,t_dt_rainout,&
-!$OMP                                  u_dt,u_dt_diff,v_dt, v_dt_diff, q_dt, vap, q_dt_ding)
+!$OMP                                  u_dt,u_dt_diff,v_dt, v_dt_diff, q_dt, vap, q_dt_ding, du_rainout, &
+!$OMP      dv_rainout, dt_atmos)
    do k=1,npz
       do j=js,je
          do i=is,ie
@@ -936,8 +944,8 @@ t_dt_rad(is:ie,js:je,1:npz) = 0. ! Ensures t_dt_rad = 0 if radiation is turned o
                  + t_dt_lsc(i,j,k) &
                  + t_dt_rainout(i,j,k)
 
-            u_dt(i,j,k) = u_dt(i,j,k) + u_dt_diff(i,j,k)
-            v_dt(i,j,k) = v_dt(i,j,k) + v_dt_diff(i,j,k)
+            u_dt(i,j,k) = u_dt(i,j,k) + u_dt_diff(i,j,k) + du_rainout(i,j,k)/dt_atmos
+            v_dt(i,j,k) = v_dt(i,j,k) + v_dt_diff(i,j,k) + dv_rainout(i,j,k)/dt_atmos
 
             q_dt(i,j,k,vap) = q_dt(i,j,k,vap) + q_dt_ding(i,j,k)
          enddo
@@ -978,6 +986,10 @@ t_dt_rad(is:ie,js:je,1:npz) = 0. ! Ensures t_dt_rad = 0 if radiation is turned o
       call send_2D_data_to_netcdf(is,ie,js,je,Time,id_surf_lw_down,surf_lw_down)
       call send_2D_data_to_netcdf(is,ie,js,je,Time,id_flux_t,flux_t)
 
+      call send_data_to_netcdf(Time, id_sw_dn, direct_down)
+      call send_data_to_netcdf(Time, id_lw_dn, lw_dn)
+      call send_data_to_netcdf(Time, id_lw_up, lw_up)
+      
       if (do_ding_convection) then
          call send_data_to_netcdf(Time, id_t_dt_ding, t_dt_conv_ding)
          call send_data_to_netcdf(Time, id_t_dt_lsc, t_dt_lsc)

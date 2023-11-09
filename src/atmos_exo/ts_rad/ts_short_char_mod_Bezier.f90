@@ -65,7 +65,7 @@ contains
 
   subroutine ts_short_char_Bezier(Bezier, surf, nlay, nlev, Ts, Tl, pl, pe, tau_Ve, tau_IRe, &
        & mu_z, F0, Tint, AB, sw_a, sw_g, sw_a_surf, lw_a_surf, net_F, olr, net_Fs, &
-       surf_lw_down, surf_sw_down, sw_down)
+       surf_lw_down, surf_sw_down, sw_down, lw_up, lw_down)
     implicit none
 
     !! Input variables
@@ -80,7 +80,7 @@ contains
     !! Output variables
     real(dp), intent(out) :: olr, net_Fs, surf_sw_down, surf_lw_down
     real(dp), dimension(nlev), intent(out) :: net_F
-    real(dp), dimension(nlev), intent(out) :: sw_down
+    real(dp), dimension(nlev), intent(out) :: sw_down, lw_up, lw_down
     
     !! Work variables
     integer :: i
@@ -88,7 +88,7 @@ contains
     real(dp), dimension(nlev) :: Te, be
     real(dp), dimension(nlev) :: lpe
     real(dp), dimension(nlay) :: lTl, lpl
-    real(dp), dimension(nlev) ::  sw_up, lw_down, lw_up
+    real(dp), dimension(nlev) ::  sw_up
     real(dp), dimension(nlev) :: lw_net, sw_net
 
     ! Log the layer values and pressure edges for more accurate interpolation
@@ -292,12 +292,13 @@ contains
 
       if (mu_z(nlev) == mu_z(1)) then
         ! No zenith correction, use regular method
-        sw_down(:) = Finc * mu_z(nlev) * exp(-tau_Ve(:)/mu_z(nlev))
+!sw_down(:) = Finc * mu_z(nlev) * exp(-tau_Ve(:)/mu_z(nlev))
+         sw_down(:) = Finc * mu_z(nlev)* exp(-tau_Ve(:)/0.5_dp)
       else
         ! Zenith angle correction, use cumulative transmission function
         cum_trans(1) = tau_Ve(1)/mu_z(1)
         do k = 1, nlev-1
-          cum_trans(k+1) = cum_trans(k) + (tau_Ve(k+1) - tau_Ve(k))/mu_z(k+1)
+          cum_trans(k+1) = cum_trans(k) + (tau_Ve(k+1) - tau_Ve(k))/0.5_dp
         end do
         do k = 1, nlev
           sw_down(k) = Finc * mu_z(nlev) * exp(-cum_trans(k))

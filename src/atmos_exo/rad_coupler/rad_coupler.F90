@@ -101,7 +101,7 @@ contains
 
 
    subroutine rad_coupler(surface_on, tidally_locked, is, ie, js, je, npz, ng, ts, pt, pl, pe, agrid, net_F, olr, opr_IR, &
-                          opr_W1, opr_W2, opr_UV, opr_VIS1, opr_VIS2, net_Fs, surf_lw_down, surf_sw_down, cff, scff, direct_down)
+                          opr_W1, opr_W2, opr_UV, opr_VIS1, opr_VIS2, net_Fs, surf_lw_down, surf_sw_down, cff, scff, direct_down, lw_dn, lw_up)
 
 
       logical, intent(IN) :: surface_on, tidally_locked
@@ -119,7 +119,7 @@ contains
                              opr_UV(is:ie,js:je), opr_VIS1(is:ie,js:je), opr_VIS2(is:ie,js:je), scff(is:ie,js:je)
       real, intent(OUT)   :: net_Fs(is:ie,js:je)
       real, intent(OUT)   :: surf_lw_down(is:ie,js:je), surf_sw_down(is:ie,js:je)
-
+      real, intent(OUT)   :: lw_up(is:ie,js:je,1:npz+1), lw_dn(is:ie,js:je,1:npz+1)
       integer :: i,j,k,b
       real :: PI=4.D0*DATAN(1.D0)
 
@@ -136,6 +136,7 @@ contains
 
       real, dimension(is:ie,js:je,n_bands,npz) :: aa, gg, kRoss
       real, dimension(is:ie,js:je,n_bands,npz+1) :: tau_bg
+      real, dimension(npz+1) :: lw_dn_1D, lw_up_1D
 
       !-----------------------------------------------------------------------------------------------
       !                                          RADIATION
@@ -305,23 +306,23 @@ contains
 !$OMP parallel do default (none) firstprivate(  &
 !$OMP                           tau_IRe,tau_Ve,mu_z,mu_z_arr,sw_a,sw_g,lw_a,lw_g,sw_a_surf,lw_a_surf,&
 !$OMP                                net_F_1D, olr_1D, net_Fs_1D, surf_lw_down_1D, surf_sw_down_1D,&
-!$OMP                                sw_down_1D) &
+!$OMP                                sw_down_1D, lw_up_1D, lw_dn_1D) &
 !$OMP     shared(js,je,is,ie,npz,tau_IRe0, tau_Ve0, n_V, n_IR, tidally_locked, I_1D, I0, surface_on, &
 !$OMP             pe, f1, ts, pt, pl, Tint, AB, &
 !$OMP              surf_lw_down, surf_sw_down, direct_down, &
 !$OMP                                   agrid,olr, net_Fs, net_F, &
-!$OMP                   kappa_lw, kappa_sw, fsw, flw, pi)    
+!$OMP                   kappa_lw, kappa_sw, fsw, flw, pi, lw_up, lw_dn)    
          do j = js,je
             do i = is,ie
-               tau_IRe(1) = kappa_lw*(flw + (1.-flw)*0.5*pe(i,j,1)/pe(i,j,npz+1))*pe(i,j,1)/grav
-               tau_Ve(1)  = kappa_sw*(fsw + (1.-fsw)*0.5*pe(i,j,1)/pe(i,j,npz+1))*pe(i,j,1)/grav
+               tau_IRe(1) = kappa_lw*(flw + 2*(1.-flw)*0.5*pe(i,j,1)/pe(i,j,npz+1))*pe(i,j,1)/grav
+               tau_Ve(1)  = kappa_sw*(fsw + 2*(1.-fsw)*0.5*pe(i,j,1)/pe(i,j,npz+1))*pe(i,j,1)/grav
                do k = 2, npz+1
 !                  tau_IRe(k) = f1*tau_IRe0 * (pe(i,j,k) / pe(i,j,npz+1)) &
 !                       + (1-f1)*tau_IRe0 * (pe(i,j,k) / pe(i,j,npz+1)) **n_IR
 !                  tau_Ve(k) = tau_Ve0 * (pe(i,j,k) / pe(i,j,npz+1)) ** n_V
 
-                  tau_IRe(k) = tau_IRe(k-1) + kappa_lw*(flw + (1.-flw)*(pl(i,j,k-1)/pe(i,j,npz+1)))*(pe(i,j,k) - pe(i,j,k-1))/grav
-                  tau_Ve(k)  =  tau_Ve(k-1) + kappa_sw*(fsw + (1.-fsw)*(pl(i,j,k-1)/pe(i,j,npz+1)))*(pe(i,j,k) - pe(i,j,k-1))/grav
+                  tau_IRe(k) = tau_IRe(k-1) + kappa_lw*(flw + 2*(1.-flw)*(pl(i,j,k-1)/pe(i,j,npz+1)))*(pe(i,j,k) - pe(i,j,k-1))/grav
+                  tau_Ve(k)  =  tau_Ve(k-1) + kappa_sw*(fsw + 2*(1.-fsw)*(pl(i,j,k-1)/pe(i,j,npz+1)))*(pe(i,j,k) - pe(i,j,k-1))/grav
                end do
 
                if (tidally_locked) then
@@ -339,7 +340,7 @@ contains
 
                call ts_short_char_Bezier(.true., surface_on, npz, npz+1, ts(i,j), pt(i,j,1:npz), pl(i,j,1:npz), & 
                     pe(i,j,1:npz+1), tau_Ve, tau_IRe, mu_z_arr, I_1D, Tint, AB, sw_a, sw_g,     &
-                    sw_a_surf, lw_a_surf, net_F_1D, olr_1D, net_Fs_1D,surf_lw_down_1D,surf_sw_down_1D,sw_down_1D)
+                    sw_a_surf, lw_a_surf, net_F_1D, olr_1D, net_Fs_1D,surf_lw_down_1D,surf_sw_down_1D,sw_down_1D, lw_up_1D, lw_dn_1D)
 
                net_F(i,j,:) = net_F_1D
                net_Fs(i,j) = net_Fs_1D
@@ -347,7 +348,9 @@ contains
                surf_lw_down(i,j) = surf_lw_down_1D
                surf_sw_down(i,j) = surf_sw_down_1D
                direct_down(i,j,1:npz+1)  = sw_down_1D
-
+               lw_up(i,j,1:npz+1) = lw_up_1D
+               lw_dn(i,j,1:npz+1) = lw_dn_1D
+               
             end do
          end do
 

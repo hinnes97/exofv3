@@ -8,7 +8,7 @@ module netcdf_reg_mod
   integer :: id_net_F, id_net_Fs, id_olr, id_opr_IR, id_opr_W1, id_opr_W2, id_opr_UV, id_opr_VIS1, id_opr_VIS2,&
              id_cff, id_scff, id_direct_down, id_t_dt_rad, id_t_dt_conv, id_t_dt_conv_moist, id_height, id_isr,&
              id_surf_sw_down, id_surf_lw_down, id_flux_t, id_t_dt_ding, id_t_dt_lsc, id_t_dt_rainout, &
-             id_q_dt_ding, id_q_dt_lsc, id_q_dt_rainout
+             id_q_dt_ding, id_q_dt_lsc, id_q_dt_rainout, id_sw_dn, id_lw_dn, id_lw_up
 
   !integer, dimension(n_bands) :: id_net_F_bg
 
@@ -93,7 +93,8 @@ module netcdf_reg_mod
          call register_diagnostic_field_2D(axes,Time,"dynamics",'olr',&
                                         &'outgoing radiation','watts/m2',id_olr)
          call register_diagnostic_field(axes,Time,"dynamics",'direct_down',&
-                                        &'downward direct flux','watts/m2',id_direct_down)
+              &'downward direct flux','watts/m2',id_direct_down)
+         
 
       case('ts_short_char_bezier')
 
@@ -101,9 +102,13 @@ module netcdf_reg_mod
                                         &'net flux','watts/m2',id_net_F, .true.)
          call register_diagnostic_field_2D(axes,Time,"dynamics",'olr',&
                                         &'outgoing radiation','watts/m2',id_olr)
-         call register_diagnostic_field(axes,Time,"dynamics",'direct_down',&
-                                        &'downward direct flux','watts/m2',id_direct_down)
-
+         call register_diagnostic_field(axes,Time,"dynamics", "sw_dn", &
+         & "downward sw_flux", "w/m^2", id_sw_dn, .true.)
+         call register_diagnostic_field(axes,Time,"dynamics", "lw_dn", &
+         & "downward lw_flux", "w/m^2", id_lw_dn, .true.)
+         call register_diagnostic_field(axes,Time,"dynamics", "lw_up", &
+         & "upward lw_flux", "w/m^2", id_lw_up, .true.)
+         
        case('ts_isothermal')
 
          call register_diagnostic_field(axes,Time,"dynamics",'net_F',&
