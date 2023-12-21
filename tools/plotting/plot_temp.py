@@ -19,11 +19,15 @@ for f in files:
     with xr.open_dataset(os.path.join(args.output_dir, f), decode_times=False) as ds:
         for p in args.plevs:
             data = ds.temp.sel(level=p, method='nearest')
-
+            u = ds.ucomp.sel(level=p, method='nearest')
+            v = ds.vcomp.sel(level=p, method='nearest')
+            
             plt.figure()
             
             plt.contourf(data.grid_xt, data.grid_yt, data[-1], cmap=cmap)
             plt.colorbar()
+            plt.quiver(data.grid_xt[::4], data.grid_yt[::4], u[-1,::4,::4], v[-1,::4,::4])
+ 
 
             plt.xlabel("Longitude")
             plt.ylabel("Latitude")
