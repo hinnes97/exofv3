@@ -47,7 +47,7 @@ contains
        call dry_convection_init(axes, Time)
     endif
 
-    call rad_coupler_init(axes, Time)
+    call rad_coupler_init(axes, Time, is,ie,js,je,npz,nq,q)
   end subroutine exo_init
   
 end module exo_phys_init_mod
