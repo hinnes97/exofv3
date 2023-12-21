@@ -22,7 +22,7 @@ mosaic_dir="${PWD}/../postprocessing/mosaics"
 cd $nctools_dir
 
 # # Run autoreconf
-# autoreconf -i . || { echo "Autoreconf failed"; exit $?; } 
+autoreconf -i . || { echo "Autoreconf failed"; exit $?; } 
 
 # Make build directory
 if [[ ! -d "build" ]] ; then
