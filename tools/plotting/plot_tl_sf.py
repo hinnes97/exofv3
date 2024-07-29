@@ -12,7 +12,7 @@ import os
 parser = argparse.ArgumentParser()
 parser.add_argument("output_dir", type=str)
 args = parser.parse_args()
-
+print('output_dir', args.output_dir)
 Rp = 1.66e7
 g = 12.4
 
@@ -105,7 +105,7 @@ def interpolate_to_TL_ndim(lat,lon,lat_TL,lon_TL,data,lon_ss=0.,method="nearest"
 
     return data_interp 
 
-with xr.open_dataset('atmos_daily.nc', decode_times=False) as ds:
+with xr.open_dataset(args.output_dir+'/atmos_daily.nc', decode_times=False) as ds:
     lon_TL = ds.grid_xt.data*np.pi/180
     lat_TL = ds.grid_yt.data*np.pi/180
 
@@ -123,7 +123,7 @@ with xr.open_dataset('atmos_daily.nc', decode_times=False) as ds:
     
     plt.figure()
     cmap = mpl.cm.coolwarm
-    plt.contourf(np.degrees(lat_TL), ds.pfull*100., strf, cmap=cmap, norm =mpl.colors.CenteredNorm())
+    plt.contourf(np.degrees(lat_TL), ds.pfull*100., strf, cmap=cmap, norm =mpl.colors.CenteredNorm(), levels=15)
     plt.colorbar()
 
     plt.xlabel('Latitude')
