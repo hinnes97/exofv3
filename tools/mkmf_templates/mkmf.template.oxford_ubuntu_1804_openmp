@@ -1,0 +1,14 @@
+# custom template for Intel Fortran compiler
+# by Prentice Bisbal (7th April 2010)
+
+COMPILER = /network/software/ubuntu_focal/openmpi/4.1.5-intel
+FMS_HOME = /network/group/aopp/planetary/RTP026_INNES_MSN/exofv3/bin/FMS
+FC = ${COMPILER}/bin/mpif90
+LD = ${FC}
+NETCDF = /network/software/ubuntu_focal/netcdf/netcdf-c-4.9.2-parallel
+
+NF = /network/software/ubuntu_focal/netcdf/netcdf-fortran-4.6.1
+OPENMPI = /network/software/ubuntu_bionic/openmpi/4.1.5-intel
+FFLAGS = -convert big_endian -safe-cray-ptr -ftz -i4 -r8 -fpp -O3 -I${NETCDF}/include -I${OPENMPI}/include -I${FMS_HOME}/include -g -qopenmp 
+LDFLAGS = -L${NETCDF}/lib -L${NF}/lib -L${OPENMPI}/lib -lnetcdff -lnetcdf -lmpi -lm -qopenmp
+CFLAGS = -I${NETCDF}/include -I${OPENMPI}/include  -qopenmp
